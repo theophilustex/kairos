@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Kairos application icon.
+
+       A calendar page with its binding rings and one highlighted day, drawn
+       on the 128x128 grid the GNOME icon guidelines use so it sits correctly
+       beside other app icons.
+
+       Keep this comment *inside* the <svg> element: gdk-pixbuf sniffs only
+       the first 256 bytes of a file to identify it, and a long comment before
+       the opening tag pushes "<svg" out of that window, at which point the
+       icon silently fails to load. -->
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e6e8ea"/>
+    </linearGradient>
+    <linearGradient id="header" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#62a0ea"/>
+      <stop offset="1" stop-color="#3584e4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- binding rings -->
+  <g fill="#5e5c64">
+    <rect x="36" y="12" width="8" height="22" rx="4"/>
+    <rect x="84" y="12" width="8" height="22" rx="4"/>
+  </g>
+
+  <!-- the page -->
+  <rect x="16" y="22" width="96" height="92" rx="12" fill="url(#page)"/>
+  <path d="M16 34a12 12 0 0 1 12-12h72a12 12 0 0 1 12 12v14H16z" fill="url(#header)"/>
+  <rect x="17" y="23" width="94" height="90" rx="11" fill="none"
+        stroke="#1c71d8" stroke-opacity="0.35" stroke-width="2"/>
+
+  <!-- the day grid -->
+  <g fill="#9a9996">
+    <rect x="30" y="60" width="12" height="10" rx="2"/>
+    <rect x="50" y="60" width="12" height="10" rx="2"/>
+    <rect x="70" y="60" width="12" height="10" rx="2"/>
+    <rect x="90" y="60" width="12" height="10" rx="2"/>
+    <rect x="30" y="78" width="12" height="10" rx="2"/>
+    <rect x="70" y="78" width="12" height="10" rx="2"/>
+    <rect x="90" y="78" width="12" height="10" rx="2"/>
+    <rect x="30" y="96" width="12" height="10" rx="2"/>
+    <rect x="50" y="96" width="12" height="10" rx="2"/>
+    <rect x="70" y="96" width="12" height="10" rx="2"/>
+  </g>
+
+  <!-- today -->
+  <rect x="50" y="78" width="12" height="10" rx="2" fill="#e01b24"/>
+</svg>

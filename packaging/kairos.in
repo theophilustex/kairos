@@ -1,0 +1,8 @@
+#!/bin/sh
+# Launcher for an installed copy of Kairos.
+#
+# "make install" copies this into <prefix>/bin/kairos with @PREFIX@ and
+# @PYTHON@ substituted. It exists so the installed app does not depend on
+# Kairos being on your PYTHONPATH.
+
+exec @PYTHON@ -c 'import sys; sys.path.insert(0, "@PREFIX@/share/kairos"); from kairos.app import main; sys.exit(main())' "$@"

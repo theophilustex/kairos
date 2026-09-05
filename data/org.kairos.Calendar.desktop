@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name=Kairos
+GenericName=Calendar
+Comment=A lightweight, customisable calendar with CalDAV support
+Exec=kairos
+Icon=org.kairos.Calendar
+Terminal=false
+Categories=GNOME;GTK;Office;Calendar;
+Keywords=calendar;event;appointment;meeting;schedule;caldav;webdav;
+StartupNotify=true
+StartupWMClass=org.kairos.Calendar
+X-GNOME-UsesNotifications=true
+DBusActivatable=false
+Actions=NewEvent;
+
+[Desktop Action NewEvent]
+Name=New Event
+Exec=kairos --new-event

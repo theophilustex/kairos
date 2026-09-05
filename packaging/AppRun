@@ -1,0 +1,55 @@
+#!/bin/bash
+# The entry point inside the Kairos AppImage.
+#
+# Its whole job is to point Python, GLib and GTK at the copies of themselves
+# that live inside the bundle rather than at the host system's. Every export
+# below exists because something breaks without it — the comments say what.
+
+set -e
+
+# Where the AppImage got mounted. AppRun is always at the top of the AppDir.
+APPDIR="$(dirname "$(readlink -f "$0")")"
+export APPDIR
+
+# --- the bundled libraries ---------------------------------------------------
+export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# --- the bundled Python ------------------------------------------------------
+# PYTHONHOME tells the interpreter where its standard library lives; without
+# it a bundled python finds the host's stdlib and dies on a version mismatch.
+export PYTHONHOME="$APPDIR/usr"
+export PYTHONDONTWRITEBYTECODE=1
+PYTHON_VERSION="$(cat "$APPDIR/usr/lib/kairos/PYTHON_VERSION" 2>/dev/null || echo 3)"
+export PYTHONPATH="$APPDIR/usr/lib/kairos:$APPDIR/usr/lib/kairos/vendor:$APPDIR/usr/lib/python${PYTHON_VERSION}/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
+
+# --- GObject introspection ---------------------------------------------------
+# PyGObject looks up .typelib files here. Miss this and "gi.require_version"
+# fails with a confusing "Namespace Gtk not available".
+export GI_TYPELIB_PATH="$APPDIR/usr/lib/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+
+# --- GTK's own data ----------------------------------------------------------
+# GTK reads its settings from a compiled GSettings schema; if it cannot find
+# org.gtk.Settings.* it aborts at startup with "Settings schema not installed".
+export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas${GSETTINGS_SCHEMA_DIR:+:$GSETTINGS_SCHEMA_DIR}"
+
+# Icon themes and other shared data. The host's directories stay on the path
+# after ours, so a user's own icon theme still wins where it has an icon.
+export XDG_DATA_DIRS="$APPDIR/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+
+# The SVG loader, which the app icon needs.
+if [ -f "$APPDIR/usr/lib/gdk-pixbuf-2.0/loaders.cache" ]; then
+    export GDK_PIXBUF_MODULE_FILE="$APPDIR/usr/lib/gdk-pixbuf-2.0/loaders.cache"
+    export GDK_PIXBUF_MODULEDIR="$APPDIR/usr/lib/gdk-pixbuf-2.0/loaders"
+fi
+
+# Bundled CA certificates, so https to a calendar server works on a host whose
+# certificate store lives somewhere we did not expect.
+if [ -f "$APPDIR/usr/share/ca-certificates/bundle.crt" ]; then
+    export SSL_CERT_FILE="${SSL_CERT_FILE:-$APPDIR/usr/share/ca-certificates/bundle.crt}"
+    export REQUESTS_CA_BUNDLE="${REQUESTS_CA_BUNDLE:-$SSL_CERT_FILE}"
+fi
+
+# GTK 4 has no module path to set, but the input modules and the cursor theme
+# come from XDG_DATA_DIRS, which is already handled above.
+
+exec "$APPDIR/usr/bin/python3" -m kairos "$@"

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.kairos.Calendar</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Kairos</name>
+  <summary>A lightweight, customisable calendar</summary>
+
+  <description>
+    <p>
+      Kairos is a calendar for Linux desktops. It connects to any CalDAV or
+      WebDAV server — Nextcloud, Radicale, Fastmail, Posteo, your own — and
+      reads and writes your events there.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Month, week, day and agenda views</li>
+      <li>Full read and write access to CalDAV/WebDAV calendars</li>
+      <li>Desktop notifications driven by each event's own reminders</li>
+      <li>Works offline: changes are queued and sent on the next sync</li>
+      <li>Passwords stored in the system keyring, never in a config file</li>
+      <li>Customisable through plain JSON settings and your own CSS</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">org.kairos.Calendar.desktop</launchable>
+
+  <developer id="org.kairos">
+    <name>The Kairos contributors</name>
+  </developer>
+
+  <!-- Replace these with your own repository if you fork Kairos; they are
+       what software centres link to from the app's page. -->
+  <url type="homepage">https://github.com/kairos-calendar/kairos</url>
+  <url type="bugtracker">https://github.com/kairos-calendar/kairos/issues</url>
+  <url type="vcs-browser">https://github.com/kairos-calendar/kairos</url>
+
+  <categories>
+    <category>Office</category>
+    <category>Calendar</category>
+  </categories>
+
+  <keywords>
+    <keyword>calendar</keyword>
+    <keyword>caldav</keyword>
+    <keyword>webdav</keyword>
+    <keyword>schedule</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1"/>
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+
+  <releases>
+    <release version="0.1.0" date="2026-09-05">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

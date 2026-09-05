@@ -1,0 +1,24 @@
+# Build output
+build/
+dist/
+*.egg-info/
+*.AppImage
+*.AppDir/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Nothing here should ever contain a password, but just in case a developer
+# points XDG_CONFIG_HOME at the checkout while debugging:
+kairos.db
+cache.db
+settings.json
+accounts.json

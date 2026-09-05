@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kairos-calendar"
+version = "0.1.0"
+description = "A lightweight, customisable calendar for Linux with CalDAV/WebDAV support"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "The Kairos contributors" }]
+keywords = ["calendar", "caldav", "webdav", "gtk4", "libadwaita", "linux"]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: GTK",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Scheduling",
+]
+
+# PyGObject is deliberately *not* listed here.  It has to match the system's
+# GTK 4 and libadwaita, so it must come from your distribution's packages
+# (python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1) rather than from pip.  See the
+# README's "Installing" section.
+dependencies = [
+    "caldav>=1.0",
+    "icalendar>=5.0",
+    "recurring-ical-events>=2.0",
+    "keyring>=23.0",
+]
+
+[project.optional-dependencies]
+# Everything needed to run the test suite, including the CalDAV integration
+# tests, which start a real Radicale server on localhost.
+test = ["radicale>=3.0", "pyflakes"]
+
+[project.urls]
+Homepage = "https://github.com/"
+Issues = "https://github.com/"
+
+[project.scripts]
+kairos = "kairos.app:main"
+
+[tool.setuptools]
+# style.css is not Python, so it needs listing explicitly or it will not be
+# installed alongside the modules that load it.
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["kairos*"]
+
+[tool.setuptools.package-data]
+kairos = ["ui/*.css"]

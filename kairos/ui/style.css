@@ -1,0 +1,235 @@
+/* Kairos — the built-in stylesheet.
+ *
+ * This is loaded first, so both the generated preference sheet and the user's
+ * own ~/.config/kairos/custom.css can override anything here.  Colours are
+ * taken from libadwaita's named palette (@card_bg_color and friends) so the
+ * app follows the system light/dark theme without a second stylesheet.
+ */
+
+/* ---------------------------------------------------------------- grid -- */
+
+.kairos-grid {
+    background-color: @headerbar_shade_color;
+}
+
+.kairos-weekday-heading {
+    font-size: 0.8em;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: alpha(currentColor, 0.6);
+    padding: 6px 4px;
+}
+
+.kairos-weekday-heading.kairos-weekend {
+    color: alpha(currentColor, 0.45);
+}
+
+.kairos-week-number {
+    font-size: 0.75em;
+    color: alpha(currentColor, 0.4);
+    padding: 4px 2px;
+}
+
+/* ------------------------------------------------------------ day cell -- */
+
+.kairos-day-cell {
+    background-color: @card_bg_color;
+    border-radius: 4px;
+    transition: background-color 120ms ease-out;
+}
+
+.kairos-day-cell:hover {
+    background-color: mix(@card_bg_color, @accent_bg_color, 0.06);
+}
+
+.kairos-day-cell.outside {
+    background-color: alpha(@card_bg_color, 0.45);
+}
+
+.kairos-day-cell.outside .kairos-day-number {
+    opacity: 0.4;
+}
+
+.kairos-day-cell.kairos-weekend {
+    background-color: mix(@card_bg_color, @window_bg_color, 0.5);
+}
+
+.kairos-day-number {
+    font-size: 0.9em;
+    min-width: 22px;
+    min-height: 22px;
+    padding: 1px 4px;
+    border-radius: 999px;
+}
+
+.kairos-day-cell.today .kairos-day-number {
+    font-weight: bold;
+}
+
+/* --------------------------------------------------------------- chips -- */
+
+/* min-width/min-height 0 override Adwaita's button minimums.  Without them
+ * a row of chips sets a floor on how narrow a day cell can be, and the whole
+ * window stops shrinking. */
+.kairos-event-chip,
+.kairos-all-day-chip {
+    font-size: 0.82em;
+    min-height: 0;
+    min-width: 0;
+    margin: 1px 0;
+    border: none;
+    box-shadow: none;
+    outline: none;
+}
+
+.kairos-event-chip:hover,
+.kairos-all-day-chip:hover,
+.kairos-event-block:hover {
+    filter: brightness(1.12);
+}
+
+.kairos-event-chip.declined {
+    opacity: 0.55;
+    text-decoration: line-through;
+}
+
+.kairos-chip-more {
+    font-size: 0.78em;
+    color: alpha(currentColor, 0.6);
+    padding: 0 4px;
+    min-height: 0;
+    background: none;
+    border: none;
+    box-shadow: none;
+}
+
+.kairos-chip-dot {
+    min-width: 7px;
+    min-height: 7px;
+    border-radius: 999px;
+    margin-right: 4px;
+}
+
+.kairos-chip-timed {
+    background: none;
+    color: inherit;
+    padding: 0 2px;
+}
+
+/* ---------------------------------------------------- week / day view -- */
+
+.kairos-hour-label {
+    font-size: 0.78em;
+    color: alpha(currentColor, 0.55);
+    padding-right: 6px;
+}
+
+.kairos-hour-row {
+    border-top: 1px solid alpha(currentColor, 0.09);
+}
+
+.kairos-hour-row.half {
+    border-top: 1px dashed alpha(currentColor, 0.05);
+}
+
+.kairos-day-column {
+    border-left: 1px solid alpha(currentColor, 0.09);
+}
+
+.kairos-event-block {
+    font-size: 0.8em;
+    padding: 2px 5px;
+    margin: 0 2px 1px 0;
+    min-width: 0;
+    min-height: 0;
+    border: none;
+    box-shadow: none;
+    outline: none;
+}
+
+.kairos-event-block label {
+    font-size: 1em;
+}
+
+.kairos-now-line {
+    min-height: 2px;
+}
+
+.kairos-now-dot {
+    min-width: 8px;
+    min-height: 8px;
+    border-radius: 999px;
+}
+
+.kairos-all-day-strip {
+    background-color: alpha(@card_bg_color, 0.6);
+    border-bottom: 1px solid alpha(currentColor, 0.12);
+    padding: 2px 0;
+}
+
+/* -------------------------------------------------------------- agenda -- */
+
+.kairos-agenda-day {
+    font-weight: bold;
+    font-size: 0.9em;
+    padding: 12px 12px 4px 12px;
+    color: alpha(currentColor, 0.75);
+}
+
+.kairos-agenda-day.today {
+    color: @accent_color;
+}
+
+.kairos-agenda-row {
+    padding: 6px 12px;
+}
+
+.kairos-agenda-time {
+    font-size: 0.85em;
+    color: alpha(currentColor, 0.6);
+    min-width: 110px;
+}
+
+/* ------------------------------------------------------------- sidebar -- */
+
+.kairos-calendar-dot {
+    min-width: 12px;
+    min-height: 12px;
+    border-radius: 4px;
+}
+
+.kairos-mini-calendar {
+    padding: 4px;
+}
+
+.kairos-sidebar-heading {
+    font-size: 0.78em;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: alpha(currentColor, 0.55);
+    padding: 10px 12px 2px 12px;
+}
+
+/* --------------------------------------------------------------- misc -- */
+
+.kairos-detail-title {
+    font-size: 1.15em;
+    font-weight: bold;
+}
+
+.kairos-detail-meta {
+    color: alpha(currentColor, 0.7);
+}
+
+.kairos-offline-badge {
+    font-size: 0.75em;
+    padding: 0 6px;
+    border-radius: 999px;
+    background-color: alpha(@warning_bg_color, 0.35);
+}
+
+.kairos-empty-state {
+    color: alpha(currentColor, 0.5);
+}
