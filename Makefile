@@ -7,8 +7,9 @@ PREFIX     ?= $(HOME)/.local
 PYTHON     ?= python3
 APP_ID      = org.kairos.Calendar
 VERSION     = $(shell sed -n 's/^VERSION = "\(.*\)"/\1/p' kairos/__init__.py)
+ICON_SIZES  = 16 24 32 48 64 128 256 512
 
-.PHONY: help run test lint install uninstall appimage clean check-deps
+.PHONY: help run test lint install uninstall appimage clean check-deps icons
 
 help:
 	@echo "Kairos $(VERSION)"
@@ -19,6 +20,7 @@ help:
 	@echo "  make install     install for the current user into $(PREFIX)"
 	@echo "  make uninstall   remove it again"
 	@echo "  make appimage    build a self-contained AppImage into build/"
+	@echo "  make icons SRC=x.png   regenerate the icon set from an image"
 	@echo "  make check-deps  report which dependencies are missing"
 	@echo "  make clean       delete build artefacts and __pycache__"
 
@@ -58,8 +60,11 @@ install:
 	chmod +x $(PREFIX)/bin/kairos
 	install -d $(PREFIX)/share/applications
 	install -m644 data/$(APP_ID).desktop $(PREFIX)/share/applications/
-	install -d $(PREFIX)/share/icons/hicolor/scalable/apps
-	install -m644 data/icons/$(APP_ID).svg $(PREFIX)/share/icons/hicolor/scalable/apps/
+	for size in $(ICON_SIZES); do \
+	  install -d $(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps; \
+	  install -m644 data/icons/hicolor/$${size}x$${size}/apps/$(APP_ID).png \
+	    $(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps/; \
+	done
 	install -d $(PREFIX)/share/metainfo
 	install -m644 data/$(APP_ID).metainfo.xml $(PREFIX)/share/metainfo/
 	-update-desktop-database $(PREFIX)/share/applications 2>/dev/null
@@ -72,10 +77,16 @@ uninstall:
 	rm -rf $(PREFIX)/share/kairos
 	rm -f  $(PREFIX)/bin/kairos
 	rm -f  $(PREFIX)/share/applications/$(APP_ID).desktop
-	rm -f  $(PREFIX)/share/icons/hicolor/scalable/apps/$(APP_ID).svg
+	for size in $(ICON_SIZES); do \
+	  rm -f $(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps/$(APP_ID).png; \
+	done
 	rm -f  $(PREFIX)/share/metainfo/$(APP_ID).metainfo.xml
 	@echo "Removed. Your calendars and settings in ~/.config/kairos are untouched;"
 	@echo "delete that directory too if you want them gone."
+
+icons:
+	@test -n "$(SRC)" || { echo "Usage: make icons SRC=path/to/icon.png"; exit 1; }
+	./packaging/make-icons.py "$(SRC)"
 
 appimage:
 	./packaging/build-appimage.sh

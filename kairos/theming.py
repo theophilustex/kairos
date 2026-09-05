@@ -105,9 +105,40 @@ class ThemeManager:
         self._load_derived_css()
         self.reload_user_css()
         self.apply_colour_scheme()
+        self.register_icons()
 
     def _add(self, provider: Gtk.CssProvider, priority: int) -> None:
         Gtk.StyleContext.add_provider_for_display(self._display, provider, priority)
+
+    # ------------------------------------------------------------------
+    # The application icon
+    # ------------------------------------------------------------------
+
+    def register_icons(self) -> None:
+        """Make the app icon findable when running from a source checkout.
+
+        Once installed, ``data/icons/hicolor`` has been copied somewhere on
+        ``XDG_DATA_DIRS`` and the icon theme finds it by itself.  Running
+        straight out of a checkout it has not, so the window and the About
+        dialog would fall back to a generic placeholder.  Adding the
+        repository's own icon directory to the search path fixes that and is
+        harmless once installed.
+        """
+        from kairos import APP_ID
+
+        Gtk.Window.set_default_icon_name(APP_ID)
+        if self._display is None:
+            return
+
+        icons = Path(__file__).resolve().parent.parent / "data" / "icons"
+        if not icons.is_dir():
+            return  # An installed copy; the theme already knows where to look.
+        try:
+            theme = Gtk.IconTheme.get_for_display(self._display)
+            if str(icons) not in theme.get_search_path():
+                theme.add_search_path(str(icons))
+        except Exception as exc:
+            log.debug("could not register the icon search path: %s", exc)
 
     # ------------------------------------------------------------------
     # The three stylesheets

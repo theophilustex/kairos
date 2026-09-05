@@ -34,6 +34,7 @@ read the whole thing in an afternoon and change the bits you disagree with.
 - [Security](#security)
 - [Running the tests](#running-the-tests)
 - [Known limitations](#known-limitations)
+- [Changing the icon](#changing-the-icon)
 - [Licence](#licence)
 
 ---
@@ -351,8 +352,30 @@ Stated plainly, because finding these out later is annoying:
 * **The sidebar's mini-calendar starts its week where your locale says**,
   which may differ from the main grid if you have overridden the preference.
   GTK's calendar widget has no setting for it.
+* **The icon is a bitmap, not a vector.** It is generated from a single
+  source image, so it is sharp at 48px and up but loses its Roman numerals at
+  16–24px, where it reads as a purple tile. A separate simplified glyph for
+  the small sizes would fix that; see below.
 * The homepage URLs in `data/org.kairos.Calendar.metainfo.xml` are
   placeholders — point them at your own repository if you fork this.
+
+## Changing the icon
+
+The icon set in `data/icons/` is generated from one image, so replacing it is
+a single command:
+
+```sh
+make icons SRC=path/to/your-icon.png
+```
+
+[`packaging/make-icons.py`](packaging/make-icons.py) crops the artwork away
+from whatever background it was drawn on, squares it, cuts transparent
+rounded corners, and writes `data/icons/hicolor/<size>x<size>/apps/` for every
+size a desktop asks for, plus a 512px master. It measures the crop from the
+image rather than assuming fixed coordinates, so a redraw at a different size
+still works.
+
+Then reinstall (`make install`) or rebuild the AppImage to pick it up.
 
 ## Licence
 

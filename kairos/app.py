@@ -177,6 +177,15 @@ def main(argv: list[str] | None = None) -> int:
 
     _configure_logging("--debug" in argv or "-d" in argv)
 
+    # GTK derives the window's WM_CLASS from the program name, and the desktop
+    # shell uses WM_CLASS to decide which .desktop file — and therefore which
+    # icon — a window belongs to. Without this the class comes out as
+    # "__main__.py" or "python3", the match fails, and the taskbar shows a
+    # generic icon however well the icon itself is installed. It has to happen
+    # before the first window is realised.
+    GLib.set_prgname(APP_ID)
+    GLib.set_application_name(APP_NAME)
+
     # Ctrl+C at a terminal should close the app, not leave it wedged.
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 

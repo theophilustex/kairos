@@ -265,11 +265,23 @@ sed -i 's|^Exec=kairos|Exec=AppRun|' "$APPDIR/$APP_ID.desktop"
 mkdir -p "$APPDIR/usr/share/applications"
 cp "$APPDIR/$APP_ID.desktop" "$APPDIR/usr/share/applications/"
 
-mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps" \
-         "$APPDIR/usr/share/metainfo"
-cp "$PROJECT/data/icons/$APP_ID.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
-cp "$PROJECT/data/icons/$APP_ID.svg" "$APPDIR/$APP_ID.svg"
-ln -sf "$APP_ID.svg" "$APPDIR/.DirIcon"
+mkdir -p "$APPDIR/usr/share/metainfo"
+cp -r "$PROJECT/data/icons/hicolor" "$APPDIR/usr/share/icons/"
+
+# The hicolor theme copied from the system brought its icon-theme.cache with
+# it, and GTK trusts that cache over what is actually on disk. Left alone it
+# would hide the icons we just added, and the app would show a generic one.
+rm -f "$APPDIR/usr/share/icons/hicolor/icon-theme.cache"
+for updater in gtk4-update-icon-cache gtk-update-icon-cache; do
+    if command -v "$updater" >/dev/null; then
+        "$updater" -f -q -t "$APPDIR/usr/share/icons/hicolor" 2>/dev/null && break
+    fi
+done
+
+# AppImage looks for an icon named after the app at the top of the AppDir,
+# with .DirIcon pointing at it. 256px is the size file managers expect.
+cp "$PROJECT/data/icons/hicolor/256x256/apps/$APP_ID.png" "$APPDIR/$APP_ID.png"
+ln -sf "$APP_ID.png" "$APPDIR/.DirIcon"
 cp "$PROJECT/data/$APP_ID.metainfo.xml" "$APPDIR/usr/share/metainfo/"
 
 cp "$HERE/AppRun" "$APPDIR/AppRun"
