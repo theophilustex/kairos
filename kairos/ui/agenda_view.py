@@ -24,7 +24,7 @@ class AgendaView(Gtk.Box):
     """Upcoming events, grouped by day."""
 
     __gsignals__ = {
-        "event-activated": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        "event-activated": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
         "create-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "day-activated": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "date-selected": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
@@ -137,5 +137,5 @@ class AgendaView(Gtk.Box):
         button = Gtk.Button()
         button.add_css_class("flat")
         button.set_child(row)
-        button.connect("clicked", lambda *_: self.emit("event-activated", occurrence))
+        button.connect("clicked", lambda b: self.emit("event-activated", occurrence, b))
         return button

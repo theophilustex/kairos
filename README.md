@@ -13,7 +13,8 @@ read the whole thing in an afternoon and change the bits you disagree with.
 * **Read *and* write CalDAV/WebDAV**, with proper conditional writes.
 * **Works offline.** Everything is drawn from a local cache; changes queue up
   and go out on the next sync.
-* **Desktop reminders** driven by each event's own alarm settings.
+* **Desktop reminders** driven by each event's own alarm settings, at any
+  offset you like — ten minutes, five days, two weeks.
 * **Customisable** through a plain JSON settings file and your own CSS.
 * **Light.** About 7,000 lines of heavily commented Python (5,300 of actual
   code), four runtime dependencies, one SQLite file, and a single timer for
@@ -121,6 +122,9 @@ them involve recompiling anything.
 colour, text size, compact spacing, hour height, how many events a day cell
 shows, sync interval, how much history to keep, and so on.
 
+Choosing the 12-hour clock changes the pickers too, not just the labels: the
+event editor then offers 1–12 with AM/PM rather than a 0–23 spinner.
+
 ### 2. The settings file
 
 Everything the preferences dialog writes lives in a file you can edit
@@ -197,6 +201,13 @@ Passwords are the one thing not in a file — they go to your system keyring.
 
 They are all in one table at the top of [`kairos/app.py`](kairos/app.py) if
 you want different ones.
+
+### Gestures
+
+Swipe left or right — two fingers on a touchpad, or a flick on a touchscreen —
+to move to the next or previous period, in whatever unit the current view
+shows: a day, a week, a month, or an agenda page. Vertical scrolling is
+untouched.
 
 ## Building an AppImage
 
@@ -345,7 +356,9 @@ Stated plainly, because finding these out later is annoying:
   not do scheduling, attendees or RSVPs.
 * **No timezone editor.** Events are read in their own timezone and displayed
   in yours, which is right; but you cannot author an event *in* another
-  timezone.
+  timezone. Editing a server event rewrites its start in your zone — the same
+  instant, differently spelled.
+* **No year view**, so swiping never moves a whole year at a time.
 * **Custom repeat rules are read, not composed.** A rule the editor's presets
   do not cover is preserved untouched, and shown as "(from the server)", but
   you cannot build an arbitrary RRULE in the UI.

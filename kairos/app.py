@@ -163,6 +163,13 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point for both ``python -m kairos`` and the ``kairos`` command."""
     argv = list(sys.argv if argv is None else argv)
 
+    # Asking the version should not need a display. Answering it here, rather
+    # than inside the GApplication, keeps "kairos --version" quiet on a server
+    # or in a build script, where starting GTK prints a page of complaints.
+    if "--version" in argv or "-v" in argv:
+        print(f"{APP_NAME} {VERSION}")
+        return 0
+
     # Argparse handles --help nicely before GTK gets involved.
     if "--help" in argv or "-h" in argv:
         parser = argparse.ArgumentParser(

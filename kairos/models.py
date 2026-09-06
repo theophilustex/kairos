@@ -126,6 +126,34 @@ class Calendar:
 # Events
 # --------------------------------------------------------------------------
 
+#: Offsets, largest first, used to put a reminder into words.
+_OFFSET_UNITS = ((10080, "week"), (1440, "day"), (60, "hour"), (1, "minute"))
+
+
+def describe_offset(minutes: int) -> str:
+    """Put a reminder offset into words: 7200 -> "5 days before".
+
+    Picks the largest unit the offset divides into exactly, so a reminder the
+    user entered as "2 weeks" reads back as "2 weeks" rather than as
+    "20160 minutes".  Anything that does not divide evenly stays in the
+    largest unit that does, down to minutes.
+    """
+    if minutes == 0:
+        return "At time of event"
+
+    after = minutes < 0
+    value = abs(minutes)
+    for size, noun in _OFFSET_UNITS:
+        if value >= size and value % size == 0:
+            count = value // size
+            phrase = f"{count} {noun}{'s' if count != 1 else ''}"
+            break
+    else:
+        phrase = f"{value} minute{'s' if value != 1 else ''}"
+
+    return f"{phrase} after the start" if after else f"{phrase} before"
+
+
 @dataclass(frozen=True)
 class Alarm:
     """A reminder, expressed as "N minutes before the event starts".
@@ -154,12 +182,11 @@ class Alarm:
     )
 
     def label(self) -> str:
+        """How this reminder is written in the editor and the popover."""
         for minutes, text in self.PRESETS:
             if minutes == self.minutes_before:
                 return text
-        if self.minutes_before < 0:
-            return f"{-self.minutes_before} minutes after start"
-        return f"{self.minutes_before} minutes before"
+        return describe_offset(self.minutes_before)
 
 
 @dataclass
@@ -251,6 +278,11 @@ class Occurrence:
     A non-repeating event has exactly one occurrence with the same times as
     the event itself.  A weekly meeting has one per week.  Views only ever
     deal in occurrences; they never expand recurrence rules themselves.
+
+    **Occurrence times are always local**, unlike :class:`Event`, which keeps
+    whatever zone the server used.  :func:`kairos.recurrence.expand` does the
+    conversion, so a view can treat ``start.date()`` as "the day cell this
+    belongs in" without further thought.
     """
 
     event: Event

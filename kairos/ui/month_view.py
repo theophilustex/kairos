@@ -11,7 +11,7 @@ relies on:
     set_date(day)     move to the period containing ``day``
     refresh()         reload from the cache and redraw
     heading           the text for the window title
-    signals           ``event-activated(Occurrence)``,
+    signals           ``event-activated(Occurrence, Gtk.Widget)``,
                       ``create-requested(datetime)``,
                       ``day-activated(date)``
 """
@@ -125,7 +125,8 @@ class DayCell(Gtk.Box):
             button.add_css_class("kairos-chip-timed")
 
         button.set_tooltip_text(f"{occurrence.summary}\n{formatting.format_time_range(occurrence)}")
-        button.connect("clicked", lambda *_: self.view.emit("event-activated", occurrence))
+        button.connect("clicked",
+                       lambda b: self.view.emit("event-activated", occurrence, b))
         return button
 
     # -- input ------------------------------------------------------------
@@ -143,7 +144,7 @@ class MonthView(Gtk.Box):
     """A whole month of :class:`DayCell` widgets."""
 
     __gsignals__ = {
-        "event-activated": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        "event-activated": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
         "create-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "day-activated": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "date-selected": (GObject.SignalFlags.RUN_FIRST, None, (object,)),

@@ -13,5 +13,6 @@
 
 The views share one contract, described in :mod:`kairos.ui.window`: each is a
 ``Gtk.Widget`` with ``set_date(day)``, ``refresh()`` and a ``heading`` property,
-and each emits ``event-activated`` and ``create-requested``.
+and each emits ``event-activated(occurrence, widget)`` and
+``create-requested(datetime)``.
 """

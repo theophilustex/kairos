@@ -126,9 +126,9 @@ class ThemeManager:
         """
         from kairos import APP_ID
 
-        Gtk.Window.set_default_icon_name(APP_ID)
         if self._display is None:
             return
+        Gtk.Window.set_default_icon_name(APP_ID)
 
         icons = Path(__file__).resolve().parent.parent / "data" / "icons"
         if not icons.is_dir():

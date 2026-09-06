@@ -203,6 +203,26 @@
     padding: 4px;
 }
 
+/* The sidebar month gives no feedback of its own, so a date you are about to
+ * click looks exactly like one you are not. These three rules make the day
+ * under the pointer obvious. GtkCalendar builds its grid from labels, hence
+ * the node names rather than our own classes. */
+.kairos-mini-calendar > grid > label:hover {
+    background-color: alpha(currentColor, 0.15);
+    border-radius: 6px;
+}
+
+.kairos-mini-calendar > grid > label.day-name:hover,
+.kairos-mini-calendar > grid > label.week-number:hover {
+    background-color: transparent;   /* headings are not clickable */
+}
+
+.kairos-mini-calendar > grid > label {
+    padding: 2px 4px;
+    border-radius: 6px;
+    transition: background-color 100ms ease-out;
+}
+
 .kairos-sidebar-heading {
     font-size: 0.78em;
     font-weight: bold;

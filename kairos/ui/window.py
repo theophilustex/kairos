@@ -37,7 +37,7 @@ from kairos.ui.event_popover import EventPopover, confirm_delete
 from kairos.ui.month_view import MonthView
 from kairos.ui.preferences import PreferencesDialog
 from kairos.ui.week_view import DayView, WeekView
-from kairos.ui.widgets import colour_swatch
+from kairos.ui.widgets import add_horizontal_swipe, colour_swatch
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +68,9 @@ class CalendarWindow(Adw.ApplicationWindow):
         self._connect_signals()
 
         self.show_view(settings.get("default_view"))
+        # Fill the sidebar now rather than waiting for the first sync to say
+        # something changed; with only local calendars that might never come.
+        self._rebuild_calendar_list()
 
     # ------------------------------------------------------------------
     # Construction
@@ -197,6 +200,9 @@ class CalendarWindow(Adw.ApplicationWindow):
             view.connect("create-requested", self._on_create_requested)
             view.connect("day-activated", self._on_day_activated)
             view.connect("date-selected", self._on_date_selected)
+            # Swipe (touchpad or touchscreen) to page through time, in
+            # whatever unit this view shows: a day, a week, a month.
+            add_horizontal_swipe(view, self._navigate)
             self._views[key] = view
             self._stack.add_titled(view, key, label)
 
@@ -388,6 +394,9 @@ class CalendarWindow(Adw.ApplicationWindow):
 
     def refresh(self) -> None:
         """Reload the visible view and the sidebar from the cache."""
+        # A redraw replaces the chips, and a popover parented to one of them
+        # would be left pointing at a widget that no longer exists.
+        self._close_popover()
         self.current_view.refresh()
         self._rebuild_calendar_list()
         self._update_title()
@@ -424,13 +433,26 @@ class CalendarWindow(Adw.ApplicationWindow):
         editor.connect("saved", lambda _e, event: self.sync.save_event(event))
         editor.present(self)
 
-    def _on_event_activated(self, view, occurrence: Occurrence) -> None:
+    def _on_event_activated(self, _view, occurrence: Occurrence, source: Gtk.Widget) -> None:
+        """Show the detail bubble for the event the user just clicked.
+
+        ``source`` is the chip or block that was clicked, and the popover is
+        parented to *that* rather than to the view.  Two reasons, one of them
+        a bug we had:
+
+        * it points at the event instead of at the middle of the month;
+        * parented to the view, the popover's own grab treats the click that
+          opened it as a click outside itself, so it closed again immediately
+          and events could not be opened at all.
+
+        The pop-up is also deferred to an idle callback, so the click that
+        triggered it has finished being delivered first.
+        """
         calendar = self.sync.storage.get_calendar(occurrence.calendar_id)
         if calendar is None:
             return
 
-        if self._open_popover is not None:
-            self._open_popover.popdown()
+        self._close_popover()
 
         popover = EventPopover(
             occurrence,
@@ -442,16 +464,46 @@ class CalendarWindow(Adw.ApplicationWindow):
         popover.connect("delete-requested", self._on_delete_requested)
         popover.connect("closed", self._on_popover_closed)
 
-        popover.set_parent(view)
+        popover.set_parent(source)
         popover.set_position(Gtk.PositionType.BOTTOM)
-        popover.popup()
+        popover.set_has_arrow(True)
         self._open_popover = popover
+        GLib.idle_add(self._popup, popover)
+
+    @staticmethod
+    def _popup(popover: Gtk.Popover) -> bool:
+        # It may have been closed and unparented before the idle callback ran.
+        if popover.get_parent() is not None:
+            popover.popup()
+        return GLib.SOURCE_REMOVE
+
+    def _close_popover(self) -> None:
+        """Take the popover down now, rather than on the next idle.
+
+        Deliberate teardown has to be synchronous: a redraw destroys the chip
+        the popover is parented to, and GTK complains (rightly) if a widget is
+        finalised while it still has a child.
+        """
+        popover = self._open_popover
+        self._open_popover = None
+        if popover is None:
+            return
+        popover.popdown()
+        if popover.get_parent() is not None:
+            popover.unparent()
 
     def _on_popover_closed(self, popover: EventPopover) -> None:
-        # A popover must be unparented or it leaks into the widget tree.
-        GLib.idle_add(popover.unparent)
+        # A popover must be unparented or it leaks into the widget tree, but
+        # only after GTK has finished closing it.
         if self._open_popover is popover:
             self._open_popover = None
+        GLib.idle_add(self._release, popover)
+
+    @staticmethod
+    def _release(popover: Gtk.Popover) -> bool:
+        if popover.get_parent() is not None:
+            popover.unparent()
+        return GLib.SOURCE_REMOVE
 
     def _on_edit_requested(self, _popover, occurrence: Occurrence) -> None:
         editor = EventEditor(self.sync.writable_calendars(), event=occurrence.event)

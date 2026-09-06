@@ -107,7 +107,7 @@ class WeekView(Gtk.Box):
     """A timed grid covering ``day_count`` consecutive days."""
 
     __gsignals__ = {
-        "event-activated": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        "event-activated": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
         "create-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "day-activated": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "date-selected": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
@@ -391,7 +391,7 @@ class WeekView(Gtk.Box):
         button.set_hexpand(True)
         style_widget(button, tinted_button_css(colour))
         button.set_tooltip_text(f"{occurrence.summary}\n{formatting.format_time_range(occurrence)}")
-        button.connect("clicked", lambda *_: self.emit("event-activated", occurrence))
+        button.connect("clicked", lambda b: self.emit("event-activated", occurrence, b))
         return button
 
     def _make_chip(self, occurrence: Occurrence, colours: dict, css_class: str) -> Gtk.Widget:
@@ -402,7 +402,7 @@ class WeekView(Gtk.Box):
         button.set_child(label)
         button.add_css_class(css_class)
         style_widget(button, tinted_button_css(colour))
-        button.connect("clicked", lambda *_: self.emit("event-activated", occurrence))
+        button.connect("clicked", lambda b: self.emit("event-activated", occurrence, b))
         return button
 
     # ------------------------------------------------------------------

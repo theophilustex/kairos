@@ -5,8 +5,11 @@ widgets: :meth:`EventEditor.build_event` reads the form and hands back an
 :class:`~kairos.models.Event`, and the window is what actually saves it.
 
 Reminders are the interesting part.  An event can have any number, each an
-offset before the start, and they are what
-:mod:`kairos.notifications` later turns into desktop notifications.
+offset before the start, and they are what :mod:`kairos.notifications` later
+turns into desktop notifications.  The drop-down lists the common offsets, but
+"Custom…" takes any number of minutes, hours, days or weeks — and an offset
+that arrived from a server is shown in the list too, in words, whether or not
+Kairos would have offered it.
 """
 
 from __future__ import annotations
@@ -21,7 +24,9 @@ from gi.repository import Adw, GObject, Gtk  # noqa: E402
 
 from kairos.config import settings
 from kairos.ical import REPEAT_PRESETS
-from kairos.models import Alarm, Calendar, Event, local_timezone
+from kairos.models import (
+    Alarm, Calendar, Event, describe_offset, local_timezone, to_local,
+)
 from kairos.ui.widgets import DateTimeRow, colour_swatch
 
 
@@ -36,6 +41,16 @@ class EventEditor(Adw.Dialog):
         "saved": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
     }
 
+    #: Sentinel put in a reminder drop-down for the "Custom…" entry. An object
+    #: rather than a number, so it can never collide with a real offset.
+    CUSTOM = object()
+
+    #: What "Custom…" offers, as (minutes per unit, plural name).
+    CUSTOM_UNITS = ((1, "minutes"), (60, "hours"), (1440, "days"), (10080, "weeks"))
+
+    #: A year is as far ahead as a reminder can sensibly be set.
+    MAX_CUSTOM_MINUTES = 366 * 24 * 60
+
     def __init__(self, calendars: list[Calendar], *, event: Event | None = None,
                  start: datetime | None = None) -> None:
         super().__init__()
@@ -48,8 +63,12 @@ class EventEditor(Adw.Dialog):
         self._alarm_rows: list[Adw.ActionRow] = []
         self._alarm_minutes: list[int] = []
 
-        start = start or (event.start if event else self._default_start())
-        end = event.end if event else start + timedelta(
+        # An event from a server keeps whatever zone the server used, usually
+        # UTC. The editor must show the times the user actually sees on their
+        # own clock, so convert on the way in; build_event writes local times
+        # back out, which denote the same instant.
+        start = start or (to_local(event.start) if event else self._default_start())
+        end = to_local(event.end) if event else start + timedelta(
             minutes=settings.get_int("default_event_duration_minutes")
         )
 
@@ -236,18 +255,12 @@ class EventEditor(Adw.Dialog):
         return self._reminders
 
     def _add_alarm(self, minutes: int) -> None:
+        """Add one reminder row, preselected to ``minutes`` before the start."""
         row = Adw.ComboRow(title="Remind me")
-        options = Gtk.StringList()
-        for _value, label in Alarm.PRESETS:
-            options.append(label)
-
-        values = [value for value, _ in Alarm.PRESETS]
-        if minutes not in values:
-            options.append(Alarm(minutes).label())
-            values.append(minutes)
-        row.set_model(options)
-        row.set_selected(values.index(minutes))
-        row.values = values  # type: ignore[attr-defined]
+        row.values = []          # type: ignore[attr-defined]
+        row.updating = False     # type: ignore[attr-defined]
+        row.connect("notify::selected", self._on_alarm_choice_changed)
+        self._fill_alarm_row(row, minutes)
 
         remove = Gtk.Button(icon_name="user-trash-symbolic")
         remove.add_css_class("flat")
@@ -259,6 +272,95 @@ class EventEditor(Adw.Dialog):
         self._reminders.add(row)
         self._alarm_rows.append(row)
         self._update_reminder_placeholder()
+
+    def _fill_alarm_row(self, row: Adw.ComboRow, minutes: int) -> None:
+        """(Re)build one reminder drop-down so ``minutes`` is in it and chosen.
+
+        The list is the presets, plus this event's own offset when it is not
+        one of them — an event from a server may carry any offset at all, and
+        so may one the user typed — plus a "Custom…" entry at the end.
+        """
+        values = [value for value, _ in Alarm.PRESETS]
+        labels = [label for _, label in Alarm.PRESETS]
+
+        if minutes not in values:
+            position = len([v for v in values if v < minutes])
+            values.insert(position, minutes)
+            labels.insert(position, describe_offset(minutes))
+
+        values.append(self.CUSTOM)
+        labels.append("Custom…")
+
+        options = Gtk.StringList()
+        for label in labels:
+            options.append(label)
+
+        row.updating = True      # type: ignore[attr-defined]
+        try:
+            row.set_model(options)
+            row.set_selected(values.index(minutes))
+            row.values = values  # type: ignore[attr-defined]
+        finally:
+            row.updating = False  # type: ignore[attr-defined]
+
+    def _on_alarm_choice_changed(self, row: Adw.ComboRow, _param) -> None:
+        if getattr(row, "updating", False):
+            return
+        values = getattr(row, "values", [])
+        index = row.get_selected()
+        if 0 <= index < len(values) and values[index] is self.CUSTOM:
+            self._ask_for_custom_offset(row)
+
+    def _ask_for_custom_offset(self, row: Adw.ComboRow) -> None:
+        """Let the user type any offset they like: "5 days", "2 weeks"."""
+        previous = self._previous_alarm_value(row)
+
+        amount = Gtk.SpinButton.new_with_range(1, 999, 1)
+        amount.set_value(1)
+        amount.set_hexpand(True)
+
+        units = Gtk.DropDown.new_from_strings(
+            [label for _factor, label in self.CUSTOM_UNITS]
+        )
+        units.set_selected(2)          # days, the most likely thing to want
+
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box.set_margin_top(8)
+        box.append(amount)
+        box.append(units)
+        box.append(Gtk.Label(label="before"))
+
+        dialog = Adw.AlertDialog(
+            heading="Custom reminder",
+            body="How long before the event should Kairos remind you?",
+        )
+        dialog.set_extra_child(box)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("set", "Set")
+        dialog.set_response_appearance("set", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("set")
+        dialog.set_close_response("cancel")
+
+        def on_response(_dialog, response: str) -> None:
+            if response != "set":
+                self._fill_alarm_row(row, previous)
+                return
+            factor = self.CUSTOM_UNITS[units.get_selected()][0]
+            minutes = int(amount.get_value()) * factor
+            self._fill_alarm_row(row, min(minutes, self.MAX_CUSTOM_MINUTES))
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
+
+    @staticmethod
+    def _previous_alarm_value(row: Adw.ComboRow) -> int:
+        """What the row was set to before "Custom…" was picked.
+
+        Used to put the row back if the custom dialog is cancelled, so that
+        opening and dismissing it does not silently change the reminder.
+        """
+        values = [v for v in getattr(row, "values", []) if isinstance(v, int)]
+        return values[0] if values else 10
 
     def _remove_alarm(self, row: Adw.ActionRow) -> None:
         self._reminders.remove(row)
@@ -275,7 +377,7 @@ class EventEditor(Adw.Dialog):
         for row in self._alarm_rows:
             values = getattr(row, "values", [value for value, _ in Alarm.PRESETS])
             index = row.get_selected()
-            if 0 <= index < len(values):
+            if 0 <= index < len(values) and isinstance(values[index], int):
                 alarms.append(Alarm(minutes_before=values[index]))
         # Keep them in a predictable order and drop duplicates.
         seen: set[int] = set()

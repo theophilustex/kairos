@@ -146,34 +146,88 @@ class TimeButton(Gtk.MenuButton):
         self._hour = moment.hour
         self._minute = (moment.minute // self.MINUTE_STEP) * self.MINUTE_STEP
         self._updating = False
+        self._picker_is_24_hour: bool | None = None
 
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        box.set_margin_top(8)
-        box.set_margin_bottom(8)
-        box.set_margin_start(8)
-        box.set_margin_end(8)
+        self._picker = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self._picker.set_margin_top(8)
+        self._picker.set_margin_bottom(8)
+        self._picker.set_margin_start(8)
+        self._picker.set_margin_end(8)
 
-        self._hour_spin = Gtk.SpinButton.new_with_range(0, 23, 1)
+        popover = Gtk.Popover()
+        popover.set_child(self._picker)
+        # Built when the popover is first opened, and rebuilt if the clock
+        # preference has changed since — so the picker always matches the
+        # format the button is showing.
+        popover.connect("show", lambda *_: self._build_picker())
+        self.set_popover(popover)
+
+        self._build_picker()
+        self._sync_label()
+
+    # -- the picker -------------------------------------------------------
+
+    def _build_picker(self) -> None:
+        """Lay out hour/minute spinners to match the clock preference.
+
+        In 24-hour mode that is a plain 0–23 hour spinner. In 12-hour mode the
+        hours run 1–12 with an AM/PM chooser beside them, because a 12-hour
+        clock face with a 0–23 spinner underneath is exactly the mismatch this
+        widget existed to avoid.
+        """
+        twenty_four = formatting.use_24_hour()
+        if twenty_four == self._picker_is_24_hour:
+            return
+        self._picker_is_24_hour = twenty_four
+
+        clear_children(self._picker)
+
+        low, high = (0, 23) if twenty_four else (1, 12)
+        self._hour_spin = Gtk.SpinButton.new_with_range(low, high, 1)
         self._hour_spin.set_wrap(True)
         self._hour_spin.set_orientation(Gtk.Orientation.VERTICAL)
-        self._hour_spin.set_value(self._hour)
-        self._hour_spin.connect("value-changed", self._on_spin_changed)
+        self._hour_spin.connect("value-changed", self._on_picker_changed)
 
         self._minute_spin = Gtk.SpinButton.new_with_range(0, 59, self.MINUTE_STEP)
         self._minute_spin.set_wrap(True)
         self._minute_spin.set_orientation(Gtk.Orientation.VERTICAL)
-        self._minute_spin.set_value(self._minute)
-        self._minute_spin.connect("value-changed", self._on_spin_changed)
+        self._minute_spin.connect("value-changed", self._on_picker_changed)
 
-        box.append(self._hour_spin)
-        box.append(Gtk.Label(label=":"))
-        box.append(self._minute_spin)
+        self._picker.append(self._hour_spin)
+        self._picker.append(Gtk.Label(label=":"))
+        self._picker.append(self._minute_spin)
 
-        popover = Gtk.Popover()
-        popover.set_child(box)
-        self.set_popover(popover)
+        if twenty_four:
+            self._meridiem = None
+        else:
+            self._meridiem = Gtk.DropDown.new_from_strings(["AM", "PM"])
+            self._meridiem.set_valign(Gtk.Align.CENTER)
+            self._meridiem.connect("notify::selected", self._on_picker_changed)
+            self._picker.append(self._meridiem)
 
-        self._sync_label()
+        self._push_to_picker()
+
+    def _push_to_picker(self) -> None:
+        """Copy the stored 24-hour time into whatever widgets are on screen."""
+        self._updating = True
+        try:
+            if self._picker_is_24_hour:
+                self._hour_spin.set_value(self._hour)
+            else:
+                self._hour_spin.set_value(self._hour % 12 or 12)
+                self._meridiem.set_selected(0 if self._hour < 12 else 1)
+            self._minute_spin.set_value(self._minute)
+        finally:
+            self._updating = False
+
+    def _read_from_picker(self) -> tuple[int, int]:
+        """The picker's current value, always as a 24-hour time."""
+        hour = int(self._hour_spin.get_value())
+        if not self._picker_is_24_hour:
+            hour = (hour % 12) + (12 if self._meridiem.get_selected() else 0)
+        return hour, int(self._minute_spin.get_value())
+
+    # -- state ------------------------------------------------------------
 
     @property
     def hour(self) -> int:
@@ -189,20 +243,14 @@ class TimeButton(Gtk.MenuButton):
         if (hour, minute) == (self._hour, self._minute):
             return
         self._hour, self._minute = hour, minute
-        self._updating = True
-        try:
-            self._hour_spin.set_value(hour)
-            self._minute_spin.set_value(minute)
-        finally:
-            self._updating = False
+        self._push_to_picker()
         self._sync_label()
         self.emit("time-changed")
 
-    def _on_spin_changed(self, _spin) -> None:
+    def _on_picker_changed(self, *_args) -> None:
         if self._updating:
             return
-        self._hour = int(self._hour_spin.get_value())
-        self._minute = int(self._minute_spin.get_value())
+        self._hour, self._minute = self._read_from_picker()
         self._sync_label()
         self.emit("time-changed")
 
@@ -266,6 +314,74 @@ def on_click(widget: Gtk.Widget, callback, *, button: int = Gdk.BUTTON_PRIMARY) 
     gesture.connect("pressed", lambda _g, n, x, y: callback(n, x, y))
     widget.add_controller(gesture)
     return gesture
+
+
+#: How much horizontal scrolling counts as one deliberate swipe. Touchpads
+#: deliver a stream of small deltas, so this is summed rather than compared to
+#: a single event.
+SWIPE_THRESHOLD = 2.5
+
+#: A touchscreen flick has to be at least this fast, in pixels per second.
+SWIPE_VELOCITY = 250.0
+
+#: One gesture should turn one page, not ten. Further swipes are ignored until
+#: this long has passed.
+SWIPE_COOLDOWN_MS = 350
+
+
+def add_horizontal_swipe(widget: Gtk.Widget, callback) -> None:
+    """Call ``callback(+1)`` on a swipe left and ``callback(-1)`` on a swipe right.
+
+    Two input styles, because people have both:
+
+    * **touchpads** send horizontal scroll deltas, which are summed until they
+      pass :data:`SWIPE_THRESHOLD`;
+    * **touchscreens** send a swipe gesture, which is judged on velocity.
+
+    The scroll controller runs in the capture phase, so it sees the gesture
+    before the view's scrolled window does, but it returns ``False`` for
+    anything vertical — otherwise it would eat ordinary scrolling. Note the
+    sign convention: scrolling *right* (positive dx) moves *forward* in time,
+    which is the same direction the content would move under your finger.
+    """
+    state = {"accumulated": 0.0, "blocked_until": 0}
+
+    def ready() -> bool:
+        return GLib.get_monotonic_time() // 1000 >= state["blocked_until"]
+
+    def fire(direction: int) -> None:
+        state["accumulated"] = 0.0
+        state["blocked_until"] = GLib.get_monotonic_time() // 1000 + SWIPE_COOLDOWN_MS
+        callback(direction)
+
+    def on_scroll(_controller, delta_x: float, delta_y: float) -> bool:
+        if abs(delta_x) <= abs(delta_y):
+            state["accumulated"] = 0.0
+            return False                      # a vertical scroll; not ours
+        if not ready():
+            return True
+        state["accumulated"] += delta_x
+        if abs(state["accumulated"]) >= SWIPE_THRESHOLD:
+            fire(1 if state["accumulated"] > 0 else -1)
+        return True
+
+    scroll = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.BOTH_AXES)
+    scroll.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    scroll.connect("scroll", on_scroll)
+    scroll.connect("scroll-end", lambda *_: state.update(accumulated=0.0))
+    widget.add_controller(scroll)
+
+    def on_swipe(_gesture, velocity_x: float, velocity_y: float) -> None:
+        if abs(velocity_x) < SWIPE_VELOCITY or abs(velocity_x) <= abs(velocity_y):
+            return
+        if ready():
+            # A flick leftwards drags the content left, revealing what is next.
+            fire(1 if velocity_x < 0 else -1)
+
+    gesture = Gtk.GestureSwipe()
+    gesture.set_touch_only(True)
+    gesture.connect("swipe", on_swipe)
+    widget.add_controller(gesture)
 
 
 def empty_state(title: str, subtitle: str = "", icon: str = "x-office-calendar-symbolic") -> Gtk.Widget:

@@ -20,7 +20,7 @@ import icalendar
 import recurring_ical_events
 
 from kairos import ical
-from kairos.models import Event, Occurrence, local_timezone
+from kairos.models import Event, Occurrence, local_timezone, to_local
 
 log = logging.getLogger(__name__)
 
@@ -30,13 +30,29 @@ log = logging.getLogger(__name__)
 MAX_OCCURRENCES_PER_EVENT = 2000
 
 
+def _occurrence(event: Event, start: datetime, end: datetime) -> Occurrence:
+    """Build an occurrence, in the timezone the user is actually sitting in.
+
+    This conversion is the whole reason this function exists.  A server keeps
+    an event in whatever zone it was created in — usually UTC — and an evening
+    meeting in the Americas is then stored on the *following* UTC date.  Left
+    unconverted, ``start.date()`` is that UTC date, so the event lands in the
+    wrong day cell; and because its UTC start and end straddle midnight, the
+    views see a span of two days and draw it as an all-day banner.
+
+    Every occurrence therefore carries local time, and the views can go on
+    treating ``.date()`` as "the day this belongs on".
+    """
+    return Occurrence(event=event, start=to_local(start), end=to_local(end))
+
+
 def _clip(event: Event, window_start: datetime, window_end: datetime) -> list[Occurrence]:
     """The single occurrence of a non-repeating event, if it is in range."""
     if event.end > window_start and event.start < window_end:
-        return [Occurrence(event=event, start=event.start, end=event.end)]
+        return [_occurrence(event, event.start, event.end)]
     # A zero-length event (start == end) still deserves to be shown.
     if event.start == event.end and window_start <= event.start < window_end:
-        return [Occurrence(event=event, start=event.start, end=event.end)]
+        return [_occurrence(event, event.start, event.end)]
     return []
 
 
@@ -72,7 +88,7 @@ def _expand_recurring(event: Event, window_start: datetime, window_end: datetime
         else:
             end = start + event.duration
 
-        occurrences.append(Occurrence(event=event, start=start, end=end))
+        occurrences.append(_occurrence(event, start, end))
 
     if len(instances) > MAX_OCCURRENCES_PER_EVENT:
         log.warning("event %s produced more than %d occurrences; truncated",

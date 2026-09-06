@@ -45,7 +45,9 @@ APPDIR="$BUILD/Kairos.AppDir"
 APP_ID="org.kairos.Calendar"
 VERSION="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' "$PROJECT/kairos/__init__.py")"
 ARCH="$(uname -m)"
-OUTPUT="$BUILD/Kairos-${VERSION}-${ARCH}.AppImage"
+# Override with OUTPUT=... to build somewhere else, which is handy when the
+# usual file is in use.
+OUTPUT="${OUTPUT:-$BUILD/Kairos-${VERSION}-${ARCH}.AppImage}"
 
 PYTHON="${PYTHON:-python3}"
 PYTHON_VERSION="$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
@@ -304,6 +306,17 @@ printf 'AppDir size: %s\n' "$(du -sh "$APPDIR" | cut -f1)"
 # ---------------------------------------------------------------------------
 
 say "Packing the AppImage"
+
+# An AppImage that is currently running cannot be overwritten — the kernel
+# holds the file — and mksquashfs fails late with a bare "Text file busy"
+# after several minutes of work. Say so now, and say what to do about it.
+if [ -e "$OUTPUT" ] && ! : > /dev/null 2>&1 < "$OUTPUT"; then
+    : # unreadable for some other reason; let the build try anyway
+fi
+if [ -e "$OUTPUT" ] && ! (exec 3<> "$OUTPUT") 2>/dev/null; then
+    die "$OUTPUT is in use. Close the running copy of Kairos, or set
+       OUTPUT=/some/other/path.AppImage to build alongside it."
+fi
 
 APPIMAGETOOL="$BUILD/appimagetool-$ARCH.AppImage"
 if [ ! -x "$APPIMAGETOOL" ]; then
