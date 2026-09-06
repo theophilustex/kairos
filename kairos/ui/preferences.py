@@ -19,6 +19,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
+from kairos import autostart
 from kairos.config import CONFIG_DIR, CUSTOM_CSS_FILE, settings
 from kairos.security import credentials
 from kairos.theming import parse_colour
@@ -126,7 +127,50 @@ class PreferencesDialog(Adw.PreferencesDialog):
         ))
         page.add(grid)
 
+        page.add(self._background_group())
         return page
+
+    def _background_group(self) -> Adw.PreferencesGroup:
+        """Whether Kairos stays running, and whether it starts itself.
+
+        Both matter for reminders: a calendar that is not running cannot
+        remind you of anything.
+        """
+        group = Adw.PreferencesGroup(
+            title="Running",
+            description=(
+                "Kairos has to be running to remind you about anything. Left "
+                "in the background it costs a few megabytes and one timer."
+            ),
+        )
+        group.add(self._switch(
+            "Keep running when the window is closed", "run_in_background",
+            "Closing the window leaves Kairos in the taskbar. Use its icon, or "
+            "open Kairos again, to bring the window back.",
+        ))
+
+        login = Adw.SwitchRow(
+            title="Start automatically when you log in",
+            subtitle="Starts in the background, without opening the window.",
+        )
+        login.set_active(autostart.is_enabled())
+        login.connect("notify::active", self._on_autostart_changed)
+        group.add(login)
+        self._autostart_row = login
+
+        return group
+
+    def _on_autostart_changed(self, row: Adw.SwitchRow, _param) -> None:
+        """Write or delete the autostart file, and own up if that fails."""
+        wanted = row.get_active()
+        if autostart.set_enabled(wanted):
+            return
+
+        row.set_active(not wanted)          # put the switch back
+        row.set_subtitle(
+            f"Could not write {autostart.desktop_file()}. Check the "
+            "permissions on that directory."
+        )
 
     def _appearance_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage(title="Appearance", icon_name="applications-graphics-symbolic")

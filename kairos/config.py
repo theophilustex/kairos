@@ -84,6 +84,10 @@ DEFAULTS: dict[str, Any] = {
     "default_event_duration_minutes": 60,
     "default_alarm_minutes": 10,    # reminder offset for new events
     "week_starts_scrolled_to_now": True,
+    # -- Running ----------------------------------------------------------
+    # With this on, closing the window leaves Kairos running in the taskbar so
+    # that reminders still arrive. Turn it off and closing the window quits.
+    "run_in_background": True,
     # -- Notifications ----------------------------------------------------
     "notifications_enabled": True,
     "notification_lookahead_minutes": 60,   # how far ahead alarms are planned

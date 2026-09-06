@@ -2,8 +2,7 @@
 
 A lightweight, customisable calendar for Linux, written in Python with GTK 4
 and libadwaita. It talks to any CalDAV/WebDAV server — Nextcloud, Radicale,
-Fastmail, Posteo, mailbox.org, your own box — and reads and writes your events
-there.
+Fastmail, Posteo, your own box — and reads and writes your events there.
 
 It is meant to feel like GNOME Calendar, but to be small enough that you can
 read the whole thing in an afternoon and change the bits you disagree with.
@@ -16,7 +15,10 @@ read the whole thing in an afternoon and change the bits you disagree with.
 * **Reminders you cannot miss** — a notification *and* an alert window that
   comes to the front, at any offset you like: ten minutes, five days, two
   weeks. Snooze or dismiss.
-* **Customisable** through a plain JSON settings file and your own CSS.
+* **Stays out of the way.** Closing the window leaves Kairos in the taskbar so
+  reminders still arrive. It can start with your session.
+* **Customisable** through a plain JSON settings file and your own CSS, which
+  reloads the moment you save it.
 * **Light.** About 7,000 lines of heavily commented Python (5,300 of actual
   code), four runtime dependencies, one SQLite file, and a single timer for
   all your reminders.
@@ -24,407 +26,110 @@ read the whole thing in an afternoon and change the bits you disagree with.
 
 ---
 
-## Contents
-
-- [Installing](#installing)
-- [Running it](#running-it)
-- [Adding a calendar](#adding-a-calendar)
-- [Reminders](#reminders)
-- [Customising it](#customising-it)
-- [Keyboard shortcuts](#keyboard-shortcuts)
-- [Building an AppImage](#building-an-appimage)
-- [How the code is laid out](#how-the-code-is-laid-out)
-- [Security](#security)
-- [Running the tests](#running-the-tests)
-- [Known limitations](#known-limitations)
-- [Changing the icon](#changing-the-icon)
-- [Licence](#licence)
-
----
-
-## Installing
-
-Kairos needs **Python 3.10+**, **GTK 4** and **libadwaita 1**.
-
-PyGObject has to come from your distribution, because it is built against the
-exact GTK on your system. Everything else comes from pip.
-
-**Debian / Ubuntu / Linux Mint**
+## Install
 
 ```sh
+# Debian / Ubuntu / Linux Mint
 sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
                  gnome-keyring
 pip install -r requirements.txt
+
+make check-deps       # says what is missing, if anything
+make install          # into ~/.local
+kairos
 ```
 
-**Fedora**
+Fedora, Arch, openSUSE, the AppImage, and running straight from a checkout are
+all in **[docs/installation.md](docs/installation.md)**.
 
-```sh
-sudo dnf install python3-gobject gtk4 libadwaita gnome-keyring
-pip install -r requirements.txt
-```
+Then press <kbd>Ctrl</kbd>+<kbd>L</kbd> to connect a calendar account.
 
-**Arch**
+---
 
-```sh
-sudo pacman -S python-gobject gtk4 libadwaita gnome-keyring
-pip install -r requirements.txt
-```
+## Documentation
 
-Then check everything is in place and install it for your user:
-
-```sh
-make check-deps
-make install          # into ~/.local; override with PREFIX=/usr/local
-```
-
-`make uninstall` takes it away again and leaves your calendars alone.
-
-## Running it
-
-```sh
-kairos                # once installed
-./run.py              # straight from a checkout, nothing installed
-python3 -m kairos     # the same thing
-kairos --debug        # with verbose logging, when something misbehaves
-kairos --new-event    # straight into the new-event dialog
-```
-
-## Adding a calendar
-
-Open the sidebar's list button, or press <kbd>Ctrl</kbd>+<kbd>L</kbd>, then
-**Connect a CalDAV / WebDAV account**. You need the server address, your
-username and your password.
-
-Common addresses:
-
-| Provider   | Address |
-|------------|---------|
-| Nextcloud  | `https://your-server/remote.php/dav/` |
-| Radicale   | `https://your-server/` |
-| Fastmail   | `https://caldav.fastmail.com/dav/` |
-| Posteo     | `https://posteo.de:8443/` |
-| mailbox.org| `https://dav.mailbox.org/` |
-
-Press **Connect**, tick the calendars you want, press **Add**. Kairos
-discovers everything the account offers; you can hide, recolour and rename
-them afterwards without affecting the server.
-
-Calendars stored **on this computer** need no server at all — use *New
-calendar on this computer* in the same menu.
-
-## Customising it
-
-This is the part Kairos takes seriously. There are three levels, and none of
-them involve recompiling anything.
-
-### 1. Preferences
-
-<kbd>Ctrl</kbd>+<kbd>,</kbd>. First day of the week, 12/24-hour clock, accent
-colour, text size, compact spacing, hour height, how many events a day cell
-shows, sync interval, how much history to keep, and so on.
-
-Choosing the 12-hour clock changes the pickers too, not just the labels: the
-event editor then offers 1–12 with AM/PM rather than a 0–23 spinner.
-
-### 2. The settings file
-
-Everything the preferences dialog writes lives in a file you can edit
-yourself:
-
-```
-~/.config/kairos/settings.json
-```
-
-It is plain JSON with one key per preference. A few are only reachable by
-editing the file — `week_view_start_hour`, for instance. If you write
-something Kairos does not understand, it falls back to the default rather
-than refusing to start, and keys it does not recognise are preserved.
-
-The full list with defaults is at the top of
-[`kairos/config.py`](kairos/config.py) — adding a new preference means adding
-one line there and one row in `kairos/ui/preferences.py`.
-
-### 3. Your own stylesheet
-
-```
-~/.config/kairos/custom.css
-```
-
-Loaded last, so anything in it wins. **It is reloaded the moment you save
-it** — no restart. The file Kairos writes on first run lists every class name
-you can target. For example:
-
-```css
-/* Bigger, squarer event chips */
-.kairos-event-chip {
-    border-radius: 2px;
-    font-size: 0.9em;
-}
-
-/* Make weekends obvious */
-.kairos-day-cell.kairos-weekend {
-    background-color: alpha(@accent_bg_color, 0.08);
-}
-
-/* A red current-time line instead of the accent colour */
-.kairos-now-line { background-color: #e01b24; }
-```
-
-The stable class names are `kairos-day-cell` (plus `.today`, `.selected`,
-`.outside`), `kairos-day-number`, `kairos-event-chip`, `kairos-event-block`,
-`kairos-all-day-chip`, `kairos-weekday-heading`, `kairos-week-number`,
-`kairos-hour-label`, `kairos-now-line`, `kairos-agenda-day`,
-`kairos-calendar-dot` and `kairos-weekend`.
-
-### Where everything lives
-
-```
-~/.config/kairos/settings.json   preferences
-~/.config/kairos/accounts.json   your accounts, without passwords
-~/.config/kairos/custom.css      your stylesheet
-~/.cache/kairos/cache.db         the offline copy of your events
-~/.cache/kairos/snoozed_reminders.json   reminders you have snoozed
-```
-
-Passwords are the one thing not in a file — they go to your system keyring.
-
-## Reminders
-
-Each event carries its own reminders, and Kairos delivers a due one twice
-over:
-
-* a **desktop notification**, as any app would; and
-* an **alert window** that asks your desktop to bring it to the front, even
-  when Kairos is in the background or its main window is closed.
-
-The second exists because a notification slides away after a few seconds and
-is very easy to miss. The window stays until you answer it, with **Snooze**
-(5 minutes to tomorrow), **Dismiss**, and **Show in calendar**. Reminders that
-fall due together share one window rather than opening several.
-
-Snoozing is remembered on disk, so "remind me in an hour" survives closing
-Kairos or suspending the machine.
-
-If you would rather have notifications alone, turn off *Show an alert window*
-in Preferences → Reminders. The same page has a **Send a test reminder**
-button, which is the quickest way to find out whether your desktop lets the
-window take focus — that part is up to your window manager, not to Kairos, and
-some refuse. Where a compositor declines, Kairos falls back to making the
-taskbar entry demand attention, and the notification still arrives.
-
-## Keyboard shortcuts
+Full documentation is in **[docs/](docs/)**.
 
 | | |
 |---|---|
-| <kbd>Ctrl</kbd>+<kbd>N</kbd> | New event |
-| <kbd>Ctrl</kbd>+<kbd>T</kbd> | Go to today |
-| <kbd>Ctrl</kbd>+<kbd>R</kbd> / <kbd>F5</kbd> | Sync now |
-| <kbd>Ctrl</kbd>+<kbd>1…4</kbd> | Month / week / day / agenda |
-| <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> | Previous / next period |
-| <kbd>Ctrl</kbd>+<kbd>L</kbd> | Manage calendars |
-| <kbd>Ctrl</kbd>+<kbd>,</kbd> | Preferences |
-| <kbd>Ctrl</kbd>+<kbd>W</kbd> / <kbd>Q</kbd> | Close / quit |
+| [Installation](docs/installation.md) | Every distribution, the AppImage, the command line. |
+| [User guide](docs/user-guide.md) | Views, events, reminders, background running, shortcuts, gestures. |
+| [Calendars and accounts](docs/calendars.md) | Server addresses, offline behaviour, conflicts. |
+| [Configuration](docs/configuration.md) | Every setting, and styling Kairos with your own CSS. |
+| [Troubleshooting](docs/troubleshooting.md) | When something does not work. |
+| [Architecture](docs/architecture.md) | How the code fits together, and how to extend it. |
+| [Security](docs/security.md) | What is protected and how. |
+| [Packaging](docs/packaging.md) | Installing, the AppImage, the icon. |
+| [Contributing](docs/contributing.md) | Tests, style, and what a good change looks like. |
 
-They are all in one table at the top of [`kairos/app.py`](kairos/app.py) if
-you want different ones.
+---
 
-### Gestures
+## A tour in one screen
 
-Swipe left or right — two fingers on a touchpad, or a flick on a touchscreen —
-to move to the next or previous period, in whatever unit the current view
-shows: a day, a week, a month, or an agenda page. Vertical scrolling is
-untouched.
+Four views — month, week, day and agenda — switchable with
+<kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>4</kbd> or by swiping. Click an event for its
+details, double-click empty space to create one. The sidebar shows a month and
+your calendars, each of which can be hidden or recoloured.
 
-## Building an AppImage
+Reminders are per event, at any offset, and arrive as both a desktop
+notification and a window that asks to be brought to the front — because a
+notification that slides away after four seconds is very easy to miss. Snoozes
+survive a restart.
 
-```sh
-make appimage
-```
+Everything is drawn from a local SQLite cache, so it is instant and works on a
+train. The network happens on a background thread; changes you make offline are
+queued and pushed on the next sync, and a refresh from the server will never
+discard an edit you have not managed to send.
 
-This produces `build/Kairos-<version>-x86_64.AppImage`, around 70 MB, which
-runs on any reasonably modern x86-64 Linux with nothing installed.
+---
 
-The script is [`packaging/build-appimage.sh`](packaging/build-appimage.sh) and
-is commented step by step. Two things to know:
+## Security in brief
 
-* Build it on the **oldest** distribution you want to support. glibc is not
-  bundled — it cannot safely be — so an AppImage built on a new distribution
-  will not start on an older one. Ubuntu 22.04 is a good choice.
-* It checks the bundle actually starts before packing it, so a broken build
-  fails loudly rather than producing an AppImage that dies on someone else's
-  machine.
+Passwords go to the system keyring, never to a Kairos file — and if there is no
+keyring, Kairos says so rather than quietly writing one to disk. Plain http is
+refused unless you enable it *and* the host is on your own network. TLS is
+verified. Config files are `0600` and written atomically. Every SQL statement
+uses bound parameters. There is no `eval`, no `pickle`, and no outbound traffic
+beyond your own servers.
 
-## How the code is laid out
+The details, and where to look in the code, are in
+[docs/security.md](docs/security.md).
 
-Each module does one job and can be read on its own.
+---
 
-```
-kairos/
-  config.py         where settings live and how they load  (start here)
-  security.py       URL checks, password storage, safe file writes
-  models.py         the plain data types: Calendar, Event, Alarm, Occurrence
-  ical.py           translation between models and iCalendar text
-  storage.py        the SQLite cache
-  recurrence.py     turning repeating events into concrete occurrences
-  backends/
-    base.py         the five-method interface a calendar source implements
-    caldav_backend.py  the only file that imports `caldav`
-    local.py        calendars that live only on this machine
-  accounts.py       the account list (accounts.json)
-  sync.py           the background worker that keeps cache and server in step
-  notifications.py  planning and firing desktop reminders
-  formatting.py     every user-visible date string
-  theming.py        stylesheets, accent colour, watching custom.css
-  ui/
-    window.py       the main window; the only place that knows all the views
-    month_view.py   the month grid
-    week_view.py    the week and day grids
-    agenda_view.py  the scrolling list
-    event_editor.py the create/edit dialog
-    ...
-```
-
-**Two conventions worth knowing before you change anything:**
-
-1. **Every `datetime` is timezone-aware.** All-day events are stored as aware
-   local-midnight datetimes with an *exclusive* end, matching iCalendar. A
-   one-day event on the 5th runs `05 00:00 → 06 00:00`. This is why view code
-   never has to ask "is this a date or a datetime?".
-
-2. **The UI thread never touches the network.** Views read from the SQLite
-   cache; `sync.py` does the slow work on a worker thread and reports back
-   through GObject signals. If you add a feature that talks to a server, it
-   goes through a backend and gets called from the worker.
-
-### Adding things
-
-* **A new preference** — one entry in `DEFAULTS` in `config.py`, one row in
-  `ui/preferences.py`.
-* **A new view** — a widget with `set_date()`, `refresh()`, a `heading`
-  property and the four standard signals, plus one line in
-  `CalendarWindow.VIEWS`.
-* **A new repeat option** — one tuple in `REPEAT_PRESETS` in `ical.py`.
-* **A new reminder offset** — one tuple in `Alarm.PRESETS` in `models.py`.
-* **Another protocol** — a class implementing `backends/base.py`, plus a case
-  in `backend_for()`.
-
-## Security
-
-The security-relevant code is deliberately gathered in
-[`kairos/security.py`](kairos/security.py) so it can be reviewed in one sitting.
-
-* **Passwords never reach a config file.** They go to the system keyring
-  (GNOME Keyring, KWallet, …). If no keyring is available Kairos *says so* in
-  the account dialog and keeps the password in memory for the session only,
-  rather than silently writing it to disk.
-* **Plain http is refused** unless you deliberately enable it *and* the server
-  resolves to a loopback or private address. Turning the preference on will
-  still not send your password unencrypted to a public host.
-* **TLS certificates are verified** by default, per account, and the
-  preference that disables it is labelled as dangerous.
-* **URLs are validated** before any connection: only http/https, no embedded
-  `user:password@`, no `file:`/`javascript:` sneaking through the
-  "assume https" convenience.
-* **Config files are written 0600 and atomically**, so a crash cannot leave a
-  half-written file and other users cannot read them.
-* **Server data is untrusted input.** Text fields are stripped of control
-  characters and length-capped, oversized resources are skipped, and event
-  text is never rendered as Pango markup.
-* **Every SQL statement uses bound parameters.** There is no string
-  interpolation of user or server data into SQL anywhere.
-* **No `eval`, no `pickle`, no shelling out** to anything.
-
-### Conflicts
-
-Kairos sends `If-Match` when updating an event and `If-None-Match: *` when
-creating one, so it knows when someone else has changed the same event.
-
-When that happens, **your edit wins**: Kairos logs a warning and writes your
-version anyway. That is a deliberate choice — there is no merge UI, and
-throwing away what you just typed would be worse than overwriting the other
-change. If you would rather it refused, the behaviour is about ten lines in
-`CalDAVBackend.save_event`.
-
-## Running the tests
+## Tests
 
 ```sh
 make test
 ```
 
-161 tests, all standard-library `unittest`, no framework to install. They
-cover the iCalendar conversion, recurrence expansion, the storage layer's
-offline behaviour, the security rules, the overlap-packing algorithm and the
-reminder scheduler.
-
-The CalDAV tests start a real [Radicale](https://radicale.org) server on
-localhost and drive the backend against it — discovery, create, read back,
-update in place, delete, ETags, a genuine 412 conflict, and the offline queue.
-They skip cleanly if Radicale is not installed:
+263 tests, standard-library `unittest`, no framework to install. The CalDAV
+suite starts a real [Radicale](https://radicale.org) server on localhost and
+drives the backend against it — create, read back, update in place, delete,
+ETags, a genuine 412 conflict, and the offline queue. It skips cleanly if
+Radicale is not installed:
 
 ```sh
 pip install radicale
 ```
 
-The suite never touches your real settings, cache or keyring; `tests/__init__.py`
-redirects the XDG directories into a temporary sandbox first.
+The suite never touches your real settings, cache or keyring.
+
+---
 
 ## Known limitations
 
-Stated plainly, because finding these out later is annoying:
+Kairos is a calendar for one person, not a groupware client. It does not do
+invitations, attendees, free/busy or tasks; it ignores modified instances of a
+repeating event; and editing a repeating event affects the whole series. The
+full list is in
+[the user guide](docs/user-guide.md#what-kairos-does-not-do).
 
-* **Modified instances of a repeating event are ignored.** If you move just
-  one occurrence of a weekly meeting in another client, Kairos shows the
-  series as if you had not. Editing or deleting a repeating event in Kairos
-  affects the whole series, and the delete dialog says so.
-* **No task (VTODO) or journal support.** Calendars that hold only tasks are
-  skipped during discovery.
-* **No invitations or free/busy.** Kairos reads and writes events; it does
-  not do scheduling, attendees or RSVPs.
-* **No timezone editor.** Events are read in their own timezone and displayed
-  in yours, which is right; but you cannot author an event *in* another
-  timezone. Editing a server event rewrites its start in your zone — the same
-  instant, differently spelled.
-* **No year view**, so swiping never moves a whole year at a time.
-* **Whether the alert window really takes focus is your desktop's decision.**
-  Focus-stealing prevention is a feature, and there is no portable override.
-  Kairos asks properly, sets the X11 urgency hint as a fallback, and always
-  sends the notification too; on some setups the window will still open behind
-  what you are doing and merely flash in the taskbar.
-* **Custom repeat rules are read, not composed.** A rule the editor's presets
-  do not cover is preserved untouched, and shown as "(from the server)", but
-  you cannot build an arbitrary RRULE in the UI.
-* **The sidebar's mini-calendar starts its week where your locale says**,
-  which may differ from the main grid if you have overridden the preference.
-  GTK's calendar widget has no setting for it.
-* **The icon is a bitmap, not a vector.** It is generated from a single
-  source image, so it is sharp at 48px and up but loses its Roman numerals at
-  16–24px, where it reads as a purple tile. A separate simplified glyph for
-  the small sizes would fix that; see below.
-* The homepage URLs in `data/org.kairos.Calendar.metainfo.xml` are
-  placeholders — point them at your own repository if you fork this.
-
-## Changing the icon
-
-The icon set in `data/icons/` is generated from one image, so replacing it is
-a single command:
-
-```sh
-make icons SRC=path/to/your-icon.png
-```
-
-[`packaging/make-icons.py`](packaging/make-icons.py) crops the artwork away
-from whatever background it was drawn on, squares it, cuts transparent
-rounded corners, and writes `data/icons/hicolor/<size>x<size>/apps/` for every
-size a desktop asks for, plus a 512px master. It measures the crop from the
-image rather than assuming fixed coordinates, so a redraw at a different size
-still works.
-
-Then reinstall (`make install`) or rebuild the AppImage to pick it up.
+---
 
 ## Licence
 
-GPL-3.0-or-later. The full text is in [LICENSE](LICENSE).
+GPL-3.0-or-later — see [LICENSE](LICENSE).
 
 Kairos depends on [caldav](https://github.com/python-caldav/caldav),
 [icalendar](https://github.com/collective/icalendar),

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 from datetime import date
+from pathlib import Path
 
 import gi
 
@@ -60,6 +62,7 @@ class KairosApplication(Adw.Application):
         self.alarms: AlarmScheduler | None = None
         self.window: CalendarWindow | None = None
         self.alert_window = None
+        self.tray = None
 
         self.add_main_option(
             "version", ord("v"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
@@ -72,6 +75,10 @@ class KairosApplication(Adw.Application):
         self.add_main_option(
             "new-event", ord("n"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
             "Open the new-event dialog straight away", None,
+        )
+        self.add_main_option(
+            "background", ord("b"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            "Start without showing the window, so reminders still arrive", None,
         )
 
     # ------------------------------------------------------------------
@@ -87,6 +94,8 @@ class KairosApplication(Adw.Application):
         self.theme.watch_user_css()
         settings.connect(self.theme.on_settings_changed)
 
+        settings.connect(self._on_settings_changed)
+
         self.sync = SyncManager()
         self.alarms = AlarmScheduler(self, self.sync)
         # A due reminder raises a window that asks for focus; the scheduler
@@ -98,11 +107,22 @@ class KairosApplication(Adw.Application):
 
         self._install_actions()
 
+    def _ensure_running(self) -> None:
+        """Build the window and start the background machinery, once.
+
+        Separate from :meth:`do_activate` because ``--background`` needs
+        everything running *without* showing the window.
+        """
+        if self.window is not None:
+            return
+        self.window = CalendarWindow(self, self.sync, self.theme)
+        self.apply_background_mode()
+        self.sync.start()
+        self.alarms.start()
+        self._start_tray()
+
     def do_activate(self) -> None:
-        if self.window is None:
-            self.window = CalendarWindow(self, self.sync, self.theme)
-            self.sync.start()
-            self.alarms.start()
+        self._ensure_running()
         self.window.present()
 
     def do_command_line(self, command_line: Gio.ApplicationCommandLine) -> int:
@@ -111,12 +131,22 @@ class KairosApplication(Adw.Application):
             command_line.print_literal(f"{APP_NAME} {VERSION}\n")
             return 0
         _configure_logging(bool(options.get("debug")))
+
+        if options.get("background") and self.window is None:
+            # Start up complete but out of sight. Launching Kairos again, or
+            # clicking the tray icon, brings the window up.
+            self._ensure_running()
+            log.info("started in the background")
+            return 0
+
         self.activate()
         if options.get("new-event") and self.window is not None:
             self.window.new_event()
         return 0
 
     def do_shutdown(self) -> None:
+        if self.tray is not None:
+            self.tray.stop()
         if self.alarms is not None:
             self.alarms.stop()
         if self.sync is not None:
@@ -140,6 +170,49 @@ class KairosApplication(Adw.Application):
 
         for action, keys in SHORTCUTS.items():
             self.set_accels_for_action(action, keys)
+
+    # ------------------------------------------------------------------
+    # Running in the background
+    # ------------------------------------------------------------------
+
+    def apply_background_mode(self) -> None:
+        """Decide what closing the window means.
+
+        With background running on, closing hides the window instead of
+        destroying it. The window object still exists, so GTK keeps the
+        application alive, the sync timer keeps ticking and reminders keep
+        arriving. With it off, closing destroys the last window and Kairos
+        exits, which is what most applications do.
+        """
+        if self.window is not None:
+            self.window.set_hide_on_close(settings.get_bool("run_in_background"))
+
+    def _start_tray(self) -> None:
+        """Put an icon in the taskbar, if this desktop has one."""
+        from kairos.tray import MenuItem, TrayIcon
+
+        icon_directory = _icon_directory()
+        self.tray = TrayIcon(
+            icon_name=APP_ID,
+            title=APP_NAME,
+            tooltip="Calendar and reminders",
+            icon_theme_path=str(icon_directory) if icon_directory else "",
+            icon_files=_tray_icon_files(),
+            on_activate=self.activate,
+            items=[
+                MenuItem("Open Kairos", self.activate),
+                MenuItem("New event", self._tray_new_event),
+                MenuItem("Sync now", lambda: self.sync.sync_now()),
+                MenuItem(separator=True),
+                MenuItem("Quit Kairos", self.quit),
+            ],
+        )
+        self.tray.start()
+
+    def _tray_new_event(self) -> None:
+        self.activate()
+        if self.window is not None:
+            self.window.new_event()
 
     # ------------------------------------------------------------------
     # Reminder alerts
@@ -177,6 +250,10 @@ class KairosApplication(Adw.Application):
         if self.window is not None:
             self.window.go_to_day(reminder.start.date())
 
+    def _on_settings_changed(self, key: str | None) -> None:
+        if key in (None, "run_in_background"):
+            self.apply_background_mode()
+
     def _on_show_day(self, _action, parameter: GLib.Variant) -> None:
         self.activate()
         try:
@@ -185,6 +262,47 @@ class KairosApplication(Adw.Application):
             return
         if self.window is not None:
             self.window.go_to_day(day)
+
+
+def _icon_roots() -> list:
+    """Every directory that might hold our installed icons.
+
+    Kairos runs three ways and the icons land somewhere different each time:
+    beside the source in a checkout, under the install prefix once installed,
+    and inside the bundle in an AppImage. The XDG data directories cover the
+    last two — an AppImage puts its own ``usr/share`` at the front of
+    ``XDG_DATA_DIRS`` — and the checkout is checked explicitly.
+    """
+    roots = [Path(__file__).resolve().parent.parent / "data" / "icons" / "hicolor"]
+
+    data_dirs = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
+    for directory in [data_home, *data_dirs.split(":")]:
+        if directory:
+            roots.append(Path(directory) / "icons" / "hicolor")
+    return roots
+
+
+def _icon_directory():
+    """Where our icons live, for a tray that wants to look them up itself."""
+    for root in _icon_roots():
+        if root.is_dir():
+            return root
+    return None
+
+
+def _tray_icon_files() -> list:
+    """Icon files to hand to the tray as raw pixels.
+
+    Two sizes, because panels differ. Naming the icon is not enough: the tray
+    looks that name up in *its own* icon theme, which will not contain ours
+    unless Kairos has been installed system-wide.
+    """
+    for root in _icon_roots():
+        found = [root / f"{size}x{size}" / "apps" / f"{APP_ID}.png" for size in (24, 48)]
+        if all(path.is_file() for path in found):
+            return found
+    return []
 
 
 def _configure_logging(debug: bool) -> None:
