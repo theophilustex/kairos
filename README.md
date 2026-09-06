@@ -13,8 +13,9 @@ read the whole thing in an afternoon and change the bits you disagree with.
 * **Read *and* write CalDAV/WebDAV**, with proper conditional writes.
 * **Works offline.** Everything is drawn from a local cache; changes queue up
   and go out on the next sync.
-* **Desktop reminders** driven by each event's own alarm settings, at any
-  offset you like — ten minutes, five days, two weeks.
+* **Reminders you cannot miss** — a notification *and* an alert window that
+  comes to the front, at any offset you like: ten minutes, five days, two
+  weeks. Snooze or dismiss.
 * **Customisable** through a plain JSON settings file and your own CSS.
 * **Light.** About 7,000 lines of heavily commented Python (5,300 of actual
   code), four runtime dependencies, one SQLite file, and a single timer for
@@ -28,6 +29,7 @@ read the whole thing in an afternoon and change the bits you disagree with.
 - [Installing](#installing)
 - [Running it](#running-it)
 - [Adding a calendar](#adding-a-calendar)
+- [Reminders](#reminders)
 - [Customising it](#customising-it)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Building an AppImage](#building-an-appimage)
@@ -182,9 +184,34 @@ The stable class names are `kairos-day-cell` (plus `.today`, `.selected`,
 ~/.config/kairos/accounts.json   your accounts, without passwords
 ~/.config/kairos/custom.css      your stylesheet
 ~/.cache/kairos/cache.db         the offline copy of your events
+~/.cache/kairos/snoozed_reminders.json   reminders you have snoozed
 ```
 
 Passwords are the one thing not in a file — they go to your system keyring.
+
+## Reminders
+
+Each event carries its own reminders, and Kairos delivers a due one twice
+over:
+
+* a **desktop notification**, as any app would; and
+* an **alert window** that asks your desktop to bring it to the front, even
+  when Kairos is in the background or its main window is closed.
+
+The second exists because a notification slides away after a few seconds and
+is very easy to miss. The window stays until you answer it, with **Snooze**
+(5 minutes to tomorrow), **Dismiss**, and **Show in calendar**. Reminders that
+fall due together share one window rather than opening several.
+
+Snoozing is remembered on disk, so "remind me in an hour" survives closing
+Kairos or suspending the machine.
+
+If you would rather have notifications alone, turn off *Show an alert window*
+in Preferences → Reminders. The same page has a **Send a test reminder**
+button, which is the quickest way to find out whether your desktop lets the
+window take focus — that part is up to your window manager, not to Kairos, and
+some refuse. Where a compositor declines, Kairos falls back to making the
+taskbar entry demand attention, and the notification still arrives.
 
 ## Keyboard shortcuts
 
@@ -359,6 +386,11 @@ Stated plainly, because finding these out later is annoying:
   timezone. Editing a server event rewrites its start in your zone — the same
   instant, differently spelled.
 * **No year view**, so swiping never moves a whole year at a time.
+* **Whether the alert window really takes focus is your desktop's decision.**
+  Focus-stealing prevention is a feature, and there is no portable override.
+  Kairos asks properly, sets the X11 urgency hint as a fallback, and always
+  sends the notification too; on some setups the window will still open behind
+  what you are doing and merely flash in the taskbar.
 * **Custom repeat rules are read, not composed.** A rule the editor's presets
   do not cover is preserved untouched, and shown as "(from the server)", but
   you cannot build an arbitrary RRULE in the UI.

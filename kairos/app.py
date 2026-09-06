@@ -59,6 +59,7 @@ class KairosApplication(Adw.Application):
         self.theme: ThemeManager | None = None
         self.alarms: AlarmScheduler | None = None
         self.window: CalendarWindow | None = None
+        self.alert_window = None
 
         self.add_main_option(
             "version", ord("v"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
@@ -88,6 +89,9 @@ class KairosApplication(Adw.Application):
 
         self.sync = SyncManager()
         self.alarms = AlarmScheduler(self, self.sync)
+        # A due reminder raises a window that asks for focus; the scheduler
+        # knows nothing about windows, so the wiring lives here.
+        self.alarms.on_alert = self.present_reminder
         self.sync.connect("events-changed", self.alarms.reschedule)
         settings.connect(lambda key: self.alarms.reschedule() if key in
                          (None, "notifications_enabled", "notification_lookahead_minutes") else None)
@@ -136,6 +140,42 @@ class KairosApplication(Adw.Application):
 
         for action, keys in SHORTCUTS.items():
             self.set_accels_for_action(action, keys)
+
+    # ------------------------------------------------------------------
+    # Reminder alerts
+    # ------------------------------------------------------------------
+
+    def present_reminder(self, reminder) -> None:
+        """Put a due reminder on screen, in front of whatever is there.
+
+        One window holds every reminder that is currently due, so three
+        overlapping meetings raise one window with three rows rather than
+        three windows.
+        """
+        from kairos.ui.reminder_alert import ReminderAlertWindow
+
+        if self.alert_window is None:
+            window = ReminderAlertWindow(self)
+            window.connect("snoozed", lambda _w, r, m: self.alarms.snooze(r, m))
+            window.connect("dismissed", lambda _w, r: self.alarms.dismiss(r))
+            window.connect("opened", self._on_reminder_opened)
+            window.connect("close-request", self._on_alert_closed)
+            self.alert_window = window
+
+        self.alert_window.show_reminder(reminder)
+
+    def _on_alert_closed(self, _window) -> bool:
+        # Let the window finish closing, then forget it; the next reminder
+        # builds a fresh one.
+        self.alert_window = None
+        return False
+
+    def _on_reminder_opened(self, _window, reminder) -> None:
+        """"Show in calendar" — bring up the day the event is on."""
+        self.alarms.dismiss(reminder)
+        self.activate()
+        if self.window is not None:
+            self.window.go_to_day(reminder.start.date())
 
     def _on_show_day(self, _action, parameter: GLib.Variant) -> None:
         self.activate()

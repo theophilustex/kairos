@@ -11,6 +11,8 @@ editor, because that file is where the real customisation happens.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -225,6 +227,24 @@ class PreferencesDialog(Adw.PreferencesDialog):
         ))
         page.add(group)
 
+        alert = Adw.PreferencesGroup(
+            title="Alert window",
+            description=(
+                "A notification slides away after a few seconds. The alert "
+                "window stays until you answer it, and asks your desktop to "
+                "bring it to the front even when Kairos is in the background."
+            ),
+        )
+        alert.add(self._switch(
+            "Show an alert window", "reminder_alert_window",
+            "Turn this off to be reminded by notifications alone.",
+        ))
+        alert.add(self._number(
+            "Default snooze", "reminder_snooze_minutes", 1, 1440, 5,
+            "Minutes. The Snooze button also offers other lengths.",
+        ))
+        page.add(alert)
+
         test = Adw.PreferencesGroup(title="Check it works")
         row = Adw.ActionRow(
             title="Send a test notification",
@@ -240,12 +260,40 @@ class PreferencesDialog(Adw.PreferencesDialog):
         return page
 
     def _send_test(self) -> None:
+        """Fire a reminder for a pretend event, by every route in use.
+
+        Worth having: whether a notification actually reaches the desktop, and
+        whether the alert window is allowed to steal focus, both depend on the
+        desktop rather than on Kairos. This is how you find out.
+        """
+        from datetime import timedelta
+
+        from kairos.models import local_timezone
+        from kairos.notifications import PendingReminder
+
         application = Gio.Application.get_default()
         if application is None:
             return
-        notification = Gio.Notification.new("Kairos reminders are working")
+
+        now = datetime.now(tz=local_timezone())
+        reminder = PendingReminder(
+            key=f"kairos-test-{int(now.timestamp())}",
+            uid="kairos-test",
+            summary="Kairos reminders are working",
+            start=now + timedelta(minutes=10),
+            end=now + timedelta(minutes=40),
+            location="This is a test reminder",
+            calendar_name="Kairos",
+            minutes_before=10,
+            fire_at=now,
+        )
+
+        notification = Gio.Notification.new(reminder.summary)
         notification.set_body("This is what an event reminder will look like.")
         application.send_notification("kairos-test", notification)
+
+        if settings.get_bool("reminder_alert_window") and hasattr(application, "present_reminder"):
+            application.present_reminder(reminder)
 
     def _sync_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage(title="Sync & security", icon_name="network-transmit-receive-symbolic")

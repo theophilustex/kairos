@@ -232,6 +232,19 @@
     padding: 10px 12px 2px 12px;
 }
 
+/* ------------------------------------------------------- reminder alert -- */
+
+.kairos-alert-title {
+    font-size: 1.3em;
+    font-weight: bold;
+}
+
+.kairos-alert-countdown {
+    font-size: 1.05em;
+    font-weight: bold;
+    color: @accent_color;
+}
+
 /* --------------------------------------------------------------- misc -- */
 
 .kairos-detail-title {

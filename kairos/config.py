@@ -87,6 +87,11 @@ DEFAULTS: dict[str, Any] = {
     # -- Notifications ----------------------------------------------------
     "notifications_enabled": True,
     "notification_lookahead_minutes": 60,   # how far ahead alarms are planned
+    # A desktop notification is easy to miss, so a due reminder also raises a
+    # window that asks to be brought to the front. Turn this off to go back to
+    # notifications alone.
+    "reminder_alert_window": True,
+    "reminder_snooze_minutes": 10,  # the Snooze button's default offset
     # -- Syncing ----------------------------------------------------------
     "sync_interval_minutes": 15,    # 0 disables automatic syncing
     "sync_on_startup": True,
@@ -123,6 +128,7 @@ _RANGES: dict[str, tuple[float, float]] = {
     "default_event_duration_minutes": (5, 1440),
     "default_alarm_minutes": (0, 40320),
     "notification_lookahead_minutes": (5, 1440),
+    "reminder_snooze_minutes": (1, 1440),
     "sync_interval_minutes": (0, 1440),
     "sync_window_past_days": (0, 3650),
     "sync_window_future_days": (1, 3650),

@@ -7,7 +7,7 @@ tests pin down the planning logic without waiting for real time to pass.
 
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import gi
@@ -23,8 +23,15 @@ from kairos.storage import Storage
 from kairos.sync import SyncManager
 
 
-def at(hour, minute=0, day=5):
-    return datetime(2026, 9, day, hour, minute, tzinfo=local_timezone())
+def at(hour, minute=0, days=0):
+    """A time today, or ``days`` from today.
+
+    Relative to today on purpose: these tests once used fixed dates in
+    September 2026 and quietly started failing when that date passed, because
+    the fired-alarm history prunes anything older than a day.
+    """
+    day = date.today() + timedelta(days=days)
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=local_timezone())
 
 
 class SchedulerTestCase(unittest.TestCase):
@@ -91,7 +98,7 @@ class Planning(SchedulerTestCase):
     def test_a_long_reminder_is_found_even_though_the_event_is_far_off(self):
         """A week-ahead reminder must not be missed because the event is."""
         now = at(9, 0)
-        self.add("Far away", at(9, 30, day=12), [Alarm(10080)])   # 7 days
+        self.add("Far away", at(9, 30, days=7), [Alarm(10080)])   # 7 days
         planned = self.scheduler.upcoming_alarms(now)
         self.assertEqual(len(planned), 1)
         self.assertEqual(planned[0][1].summary, "Far away")
@@ -120,15 +127,15 @@ class Planning(SchedulerTestCase):
 class RepeatingReminders(SchedulerTestCase):
     def test_the_next_instance_of_a_series_is_planned(self):
         # A daily 09:30 meeting, first held a week ago.
-        self.add("Daily standup", at(9, 30, day=1), [Alarm(10)], rrule="FREQ=DAILY")
-        planned = self.scheduler.upcoming_alarms(at(9, 0, day=5))
+        self.add("Daily standup", at(9, 30, days=-4), [Alarm(10)], rrule="FREQ=DAILY")
+        planned = self.scheduler.upcoming_alarms(at(9, 0))
         self.assertEqual(len(planned), 1)
-        self.assertEqual(planned[0][0], at(9, 20, day=5))
-        self.assertEqual(planned[0][1].start, at(9, 30, day=5))
+        self.assertEqual(planned[0][0], at(9, 20))
+        self.assertEqual(planned[0][1].start, at(9, 30))
 
     def test_only_the_instances_inside_the_window_are_planned(self):
-        self.add("Daily standup", at(9, 30, day=1), [Alarm(10)], rrule="FREQ=DAILY")
-        planned = self.scheduler.upcoming_alarms(at(23, 0, day=5))
+        self.add("Daily standup", at(9, 30, days=-4), [Alarm(10)], rrule="FREQ=DAILY")
+        planned = self.scheduler.upcoming_alarms(at(23, 0))
         self.assertEqual(planned, [])
 
 
@@ -156,12 +163,12 @@ class NotRepeatingItself(SchedulerTestCase):
         self.assertEqual(restarted.upcoming_alarms(now), [])
 
     def test_two_instances_of_a_series_are_tracked_separately(self):
-        self.add("Daily", at(9, 30, day=1), [Alarm(10)], rrule="FREQ=DAILY")
+        self.add("Daily", at(9, 30, days=-4), [Alarm(10)], rrule="FREQ=DAILY")
 
-        today = self.scheduler.upcoming_alarms(at(9, 0, day=5))[0]
+        today = self.scheduler.upcoming_alarms(at(9, 0))[0]
         self.scheduler._mark_fired(*today)
 
-        tomorrow = self.scheduler.upcoming_alarms(at(9, 0, day=6))
+        tomorrow = self.scheduler.upcoming_alarms(at(9, 0, days=1))
         self.assertEqual(len(tomorrow), 1, "tomorrow's reminder was suppressed too")
 
 
