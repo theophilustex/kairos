@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 #: for rebinding a key.
 SHORTCUTS = {
     "win.new-event": ["<Control>n"],
+    "win.search": ["<Control>f"],
     "win.today": ["<Control>t"],
     "win.sync": ["<Control>r", "F5"],
     "win.preferences": ["<Control>comma"],
@@ -198,7 +199,7 @@ class KairosApplication(Adw.Application):
             tooltip="Calendar and reminders",
             icon_theme_path=str(icon_directory) if icon_directory else "",
             icon_files=_tray_icon_files(),
-            on_activate=self.activate,
+            on_activate=self.toggle_window,
             items=[
                 MenuItem("Open Kairos", self.activate),
                 MenuItem("New event", self._tray_new_event),
@@ -208,6 +209,23 @@ class KairosApplication(Adw.Application):
             ],
         )
         self.tray.start()
+
+    def toggle_window(self) -> None:
+        """What clicking the taskbar icon does.
+
+        Show the window if it is hidden, raise it if it is behind something,
+        and hide it if it is already in front — the usual behaviour for a
+        tray icon, and the reason "visible" alone is not the right test: a
+        window buried under a browser is visible, and clicking the icon then
+        should bring it forward rather than hide it.
+        """
+        if self.window is None:
+            self.activate()
+            return
+        if self.window.get_visible() and self.window.is_active():
+            self.window.set_visible(False)
+        else:
+            self.window.present()
 
     def _tray_new_event(self) -> None:
         self.activate()

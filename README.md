@@ -68,8 +68,12 @@ Full documentation is in **[docs/](docs/)**.
 
 Four views — month, week, day and agenda — switchable with
 <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>4</kbd> or by swiping. Click an event for its
-details, double-click empty space to create one. The sidebar shows a month and
-your calendars, each of which can be hidden or recoloured.
+details, double-click empty space to create one. <kbd>Ctrl</kbd>+<kbd>F</kbd>
+searches titles, places and notes.
+
+The sidebar shows a month, an **Up next** list of what is coming with each
+event's colour and time, and your calendars — each of which can be hidden or
+recoloured. Both lists fold away if you would rather have the space.
 
 Reminders are per event, at any offset, and arrive as both a desktop
 notification and a window that asks to be brought to the front — because a

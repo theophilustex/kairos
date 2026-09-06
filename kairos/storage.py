@@ -94,6 +94,11 @@ class Storage:
     and avoids every class of "which thread owns this connection" bug.
     """
 
+    #: How many candidate rows a search will parse before giving up. A term
+    #: that appears in the iCalendar boilerplate matches every row, so this is
+    #: what stops one vague search from parsing the whole calendar.
+    SCAN_LIMIT = 2000
+
     def __init__(self, path: Path | str = DATABASE_FILE) -> None:
         ensure_directories()
         self.path = Path(path)
@@ -362,10 +367,25 @@ class Storage:
         return [self._row_to_event(row) for row in rows]
 
     def search_events(self, text: str, calendar_ids: list[str], limit: int = 200) -> list[Event]:
-        """Case-insensitive substring search over titles, places and notes."""
+        """Events whose title, place or notes contain ``text``.
+
+        Two stages, and the second one matters. SQLite does the cheap part —
+        narrowing to rows whose stored iCalendar mentions the text at all —
+        and then each candidate is parsed and checked against the fields a
+        person actually meant.
+
+        Without that second stage every event matches almost anything, because
+        the iCalendar boilerplate is searched too: every event carries
+        ``CALSCALE:GREGORIAN``, so searching for "re" once returned the entire
+        calendar.
+
+        ``SCAN_LIMIT`` bounds the work: a term that prefilters to thousands of
+        rows stops being examined once enough real matches are found.
+        """
         text = text.strip()
         if not text or not calendar_ids:
             return []
+
         placeholders = ",".join("?" for _ in calendar_ids)
         # LIKE with an escaped pattern; % and _ from the user are literal.
         pattern = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -379,9 +399,19 @@ class Storage:
         """
         with self._lock:
             rows = self._connection.execute(
-                query, [*calendar_ids, PENDING_DELETE, pattern, pattern, limit]
+                query, [*calendar_ids, PENDING_DELETE, pattern, pattern, self.SCAN_LIMIT]
             ).fetchall()
-        return [self._row_to_event(row) for row in rows]
+
+        needle = text.lower()
+        found: list[Event] = []
+        for row in rows:
+            event = self._row_to_event(row)
+            if any(needle in field.lower()
+                   for field in (event.summary, event.location, event.description)):
+                found.append(event)
+                if len(found) >= limit:
+                    break
+        return found
 
     def count_events(self, calendar_id: str) -> int:
         with self._lock:

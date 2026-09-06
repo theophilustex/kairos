@@ -1,6 +1,8 @@
 # User guide
 
 - [The window](#the-window)
+- [The sidebar](#the-sidebar)
+- [Searching](#searching)
 - [Views](#views)
 - [Creating and editing events](#creating-and-editing-events)
 - [Reminders](#reminders)
@@ -15,17 +17,55 @@
 
 A sidebar on the left, the calendar on the right.
 
-The sidebar has a month at the top — click any date to jump to it — and below
-it the list of calendars, each with a checkbox that shows or hides it. Hiding
-a calendar only changes what you see; its reminders still arrive, and nothing
-is deleted.
-
 The header bar has, left to right: **+** for a new event, **‹ Today ›** for
-moving about, the current period, a sync button, the view switcher, and the
-main menu.
+moving about, the current period, a sync button, the view switcher, a search
+button, and the main menu.
 
 On a window narrower than 1000px the sidebar folds away behind a back button
 and the view switcher becomes a dropdown, so the calendar keeps the space.
+
+---
+
+## The sidebar
+
+Three parts, top to bottom.
+
+**The month.** Click any date to jump to it. The day under the pointer is
+highlighted so you can see what you are about to click.
+
+**Up next.** The next handful of events in order, grouped under *Today*,
+*Tomorrow* and then weekday names, each with its calendar's colour and its
+time. Click one to open it. It answers "what is next?" without leaving
+whichever view you are in.
+
+By default it shows 8 events over the next 30 days; both are settings
+(`sidebar_upcoming_count` and `sidebar_upcoming_days`), and the whole section
+can be switched off with `sidebar_show_upcoming`. The agenda view is there for
+the longer list.
+
+**Calendars.** Each with a checkbox that shows or hides it. Hiding a calendar
+only changes what you see — its reminders still arrive, and nothing is
+deleted.
+
+**Up next** and **Calendars** both have a disclosure triangle in their
+heading: click it to fold the section away. Kairos remembers which sections
+you left open.
+
+---
+
+## Searching
+
+Press <kbd>Ctrl</kbd>+<kbd>F</kbd>, or the magnifying glass in the header, or
+simply start typing in the calendar window.
+
+Results replace the calendar while you search, each showing the calendar's
+colour, the date, the title, and the time, place and calendar underneath.
+Click one to jump to its day and open it. <kbd>Escape</kbd> closes the search
+and puts you back in the view you came from.
+
+Search covers an event's **title, location and notes**. A repeating event is
+listed under its *next* occurrence rather than whenever the series began, and
+results still to come are listed before ones in the past.
 
 ---
 
@@ -130,7 +170,8 @@ closing the window does not quit Kairos. It carries on in the taskbar, syncing
 and firing reminders.
 
 **The taskbar icon** has a menu: *Open Kairos*, *New event*, *Sync now* and
-*Quit Kairos*. Clicking the icon opens the window. Not every desktop has a
+*Quit Kairos*. Clicking the icon shows the window, raises it if it is behind
+something, and hides it again if it is already in front. Not every desktop has a
 system tray — GNOME needs an extension — and where there is none the icon
 simply does not appear; Kairos still runs, and launching it again from your
 applications menu brings the window back.
@@ -153,6 +194,7 @@ is closed* in the same place, and closing the window will quit.
 | | |
 |---|---|
 | <kbd>Ctrl</kbd>+<kbd>N</kbd> | New event |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> | Search events |
 | <kbd>Ctrl</kbd>+<kbd>T</kbd> | Go to today |
 | <kbd>Ctrl</kbd>+<kbd>R</kbd> or <kbd>F5</kbd> | Sync now |
 | <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>Ctrl</kbd>+<kbd>4</kbd> | Month, week, day, agenda |

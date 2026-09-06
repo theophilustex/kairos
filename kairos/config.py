@@ -84,6 +84,12 @@ DEFAULTS: dict[str, Any] = {
     "default_event_duration_minutes": 60,
     "default_alarm_minutes": 10,    # reminder offset for new events
     "week_starts_scrolled_to_now": True,
+    # -- Sidebar ----------------------------------------------------------
+    "sidebar_show_upcoming": True,   # the list of what is coming up
+    "sidebar_upcoming_expanded": True,
+    "sidebar_calendars_expanded": True,
+    "sidebar_upcoming_count": 8,     # how many events the list shows
+    "sidebar_upcoming_days": 30,     # ... and how far ahead it looks
     # -- Running ----------------------------------------------------------
     # With this on, closing the window leaves Kairos running in the taskbar so
     # that reminders still arrive. Turn it off and closing the window quits.
@@ -133,6 +139,8 @@ _RANGES: dict[str, tuple[float, float]] = {
     "default_alarm_minutes": (0, 40320),
     "notification_lookahead_minutes": (5, 1440),
     "reminder_snooze_minutes": (1, 1440),
+    "sidebar_upcoming_count": (1, 30),
+    "sidebar_upcoming_days": (1, 365),
     "sync_interval_minutes": (0, 1440),
     "sync_window_past_days": (0, 3650),
     "sync_window_future_days": (1, 3650),

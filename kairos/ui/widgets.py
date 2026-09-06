@@ -16,6 +16,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, GObject, Gtk  # noqa: E402
 
 from kairos import formatting
+from kairos.config import settings
 from kairos.models import local_timezone
 from kairos.theming import parse_colour, readable_text_colour
 
@@ -382,6 +383,67 @@ def add_horizontal_swipe(widget: Gtk.Widget, callback) -> None:
     gesture.set_touch_only(True)
     gesture.connect("swipe", on_swipe)
     widget.add_controller(gesture)
+
+
+class SidebarSection(Gtk.Box):
+    """A sidebar heading you can click to fold the section away.
+
+    A disclosure triangle, a label, and an optional widget on the right (a
+    button, usually). Whether it is open is remembered in a settings key, so
+    the sidebar looks the same next time Kairos starts.
+    """
+
+    def __init__(self, title: str, child: Gtk.Widget, *,
+                 settings_key: str = "", suffix: Gtk.Widget | None = None) -> None:
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.settings_key = settings_key
+        expanded = settings.get_bool(settings_key) if settings_key else True
+
+        self._arrow = Gtk.Image.new_from_icon_name("pan-down-symbolic")
+        self._arrow.add_css_class("kairos-section-arrow")
+
+        label = Gtk.Label(label=title, xalign=0)
+        label.add_css_class("kairos-sidebar-heading")
+        label.set_hexpand(True)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        row.append(self._arrow)
+        row.append(label)
+
+        self._toggle = Gtk.Button()
+        self._toggle.set_child(row)
+        self._toggle.add_css_class("flat")
+        self._toggle.add_css_class("kairos-section-header")
+        self._toggle.connect("clicked", lambda *_: self.set_expanded(not self.expanded))
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self._toggle.set_hexpand(True)
+        header.append(self._toggle)
+        if suffix is not None:
+            suffix.set_valign(Gtk.Align.CENTER)
+            header.append(suffix)
+        self.append(header)
+
+        self._revealer = Gtk.Revealer()
+        self._revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self._revealer.set_transition_duration(150)
+        self._revealer.set_child(child)
+        self.append(self._revealer)
+
+        self.set_expanded(expanded, remember=False)
+
+    @property
+    def expanded(self) -> bool:
+        return self._revealer.get_reveal_child()
+
+    def set_expanded(self, expanded: bool, *, remember: bool = True) -> None:
+        self._revealer.set_reveal_child(expanded)
+        self._arrow.set_from_icon_name(
+            "pan-down-symbolic" if expanded else "pan-end-symbolic"
+        )
+        self._toggle.set_tooltip_text("Collapse" if expanded else "Expand")
+        if remember and self.settings_key:
+            settings.set(self.settings_key, expanded)
 
 
 def empty_state(title: str, subtitle: str = "", icon: str = "x-office-calendar-symbolic") -> Gtk.Widget:

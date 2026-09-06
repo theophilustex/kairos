@@ -36,8 +36,12 @@ from kairos.ui.event_editor import EventEditor
 from kairos.ui.event_popover import EventPopover, confirm_delete
 from kairos.ui.month_view import MonthView
 from kairos.ui.preferences import PreferencesDialog
+from kairos.ui.search_view import SearchView
 from kairos.ui.week_view import DayView, WeekView
-from kairos.ui.widgets import add_horizontal_swipe, colour_swatch
+from kairos.ui.upcoming import UpcomingList
+from kairos.ui.widgets import (
+    SidebarSection, add_horizontal_swipe, colour_swatch,
+)
 
 log = logging.getLogger(__name__)
 
@@ -53,8 +57,13 @@ class CalendarWindow(Adw.ApplicationWindow):
         ("agenda", "Agenda", AgendaView),
     )
 
+    #: The stack page holding search results. Not one of VIEWS: it is shown
+    #: only while searching and is never in the view switcher.
+    SEARCH_PAGE = "search"
+
     def __init__(self, application, sync_manager, theme_manager) -> None:
         super().__init__(application=application, title=APP_NAME)
+        self._view_before_search: str | None = None
         self.sync = sync_manager
         self.theme = theme_manager
         self._current_day = date.today()
@@ -119,14 +128,24 @@ class CalendarWindow(Adw.ApplicationWindow):
         self._mini_calendar.connect("day-selected", self._on_mini_calendar_selected)
         box.append(self._mini_calendar)
 
-        heading = Gtk.Label(label="Calendars", xalign=0)
-        heading.add_css_class("kairos-sidebar-heading")
-        box.append(heading)
+        # -- what is coming up --------------------------------------------
+        self._upcoming = UpcomingList(self.sync)
+        self._upcoming.connect("event-activated", self._on_event_activated)
+        self._upcoming_section = SidebarSection(
+            "Up next", self._upcoming,
+            settings_key="sidebar_upcoming_expanded",
+        )
+        self._upcoming_section.set_visible(settings.get_bool("sidebar_show_upcoming"))
+        box.append(self._upcoming_section)
 
+        # -- the calendars -------------------------------------------------
         self._calendar_list = Gtk.ListBox()
         self._calendar_list.set_selection_mode(Gtk.SelectionMode.NONE)
         self._calendar_list.add_css_class("navigation-sidebar")
-        box.append(self._calendar_list)
+        box.append(SidebarSection(
+            "Calendars", self._calendar_list,
+            settings_key="sidebar_calendars_expanded",
+        ))
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -206,7 +225,25 @@ class CalendarWindow(Adw.ApplicationWindow):
             self._views[key] = view
             self._stack.add_titled(view, key, label)
 
+        self._search_entry = Gtk.SearchEntry()
+        self._search_entry.set_placeholder_text("Search events")
+        self._search_entry.set_hexpand(True)
+        self._search_entry.connect("search-changed", self._on_search_changed)
+        self._search_entry.connect("stop-search", lambda *_: self.stop_search())
+
+        self._search_bar = Gtk.SearchBar()
+        self._search_bar.set_child(self._search_entry)
+        self._search_bar.connect_entry(self._search_entry)
+        # Typing anywhere in the window starts a search, as it does in Files
+        # and every other GNOME application.
+        self._search_bar.set_key_capture_widget(self)
+
+        self._search_view = SearchView(self.sync)
+        self._search_view.connect("event-activated", self._on_search_result)
+        self._stack.add_named(self._search_view, self.SEARCH_PAGE)
+
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        body.append(self._search_bar)
         body.append(self._banner)
         body.append(self._stack)
         toolbar.set_content(body)
@@ -240,6 +277,11 @@ class CalendarWindow(Adw.ApplicationWindow):
         navigation.append(following)
 
         header.pack_start(navigation)
+
+        self._search_button = Gtk.ToggleButton(icon_name="system-search-symbolic")
+        self._search_button.set_tooltip_text("Search events (Ctrl+F)")
+        self._search_button.connect("toggled", self._on_search_toggled)
+        header.pack_end(self._search_button)
 
         self._title_label = Gtk.Label()
         self._title_label.add_css_class("title")
@@ -318,6 +360,7 @@ class CalendarWindow(Adw.ApplicationWindow):
             ("about", lambda *_: self.open_about()),
             ("shortcuts", lambda *_: self.open_shortcuts()),
             ("new-event", lambda *_: self.new_event()),
+            ("search", lambda *_: self.start_search()),
             ("today", lambda *_: self.go_to_day(date.today())),
             ("next", lambda *_: self._navigate(1)),
             ("previous", lambda *_: self._navigate(-1)),
@@ -336,7 +379,10 @@ class CalendarWindow(Adw.ApplicationWindow):
         layout_keys = {
             "first_day_of_week", "show_week_numbers", "time_format", "hour_height",
             "max_chips_per_day", "agenda_days", "highlight_weekends", "compact_mode",
+            "sidebar_upcoming_count", "sidebar_upcoming_days",
         }
+        if key in (None, "sidebar_show_upcoming"):
+            self._upcoming_section.set_visible(settings.get_bool("sidebar_show_upcoming"))
         if key is None or key in layout_keys:
             self.refresh()
 
@@ -347,6 +393,8 @@ class CalendarWindow(Adw.ApplicationWindow):
     def show_view(self, key: str) -> None:
         if key not in self._views:
             key = "month"
+        if self._search_button.get_active():
+            self._search_button.set_active(False)
         self._stack.set_visible_child_name(key)
         view = self._views[key]
         view.set_date(self._current_day)
@@ -361,7 +409,11 @@ class CalendarWindow(Adw.ApplicationWindow):
 
     @property
     def current_view(self):
-        return self._views[self._stack.get_visible_child_name()]
+        """The calendar view on screen, never the search results page."""
+        name = self._stack.get_visible_child_name()
+        if name == self.SEARCH_PAGE:
+            name = self._view_before_search or settings.get("default_view")
+        return self._views.get(name) or self._views["month"]
 
     def _navigate(self, direction: int) -> None:
         view = self.current_view
@@ -399,7 +451,47 @@ class CalendarWindow(Adw.ApplicationWindow):
         self._close_popover()
         self.current_view.refresh()
         self._rebuild_calendar_list()
+        self._upcoming.refresh()
         self._update_title()
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    def start_search(self) -> None:
+        """Show the search bar and put the cursor in it."""
+        self._search_button.set_active(True)
+        self._search_entry.grab_focus()
+
+    def stop_search(self) -> None:
+        """Close the search and go back to the view that was showing."""
+        self._search_button.set_active(False)
+
+    def _on_search_toggled(self, button: Gtk.ToggleButton) -> None:
+        searching = button.get_active()
+        self._search_bar.set_search_mode(searching)
+
+        if searching:
+            self._view_before_search = self._stack.get_visible_child_name()
+            self._search_view.search(self._search_entry.get_text())
+            self._stack.set_visible_child_name(self.SEARCH_PAGE)
+            self._search_entry.grab_focus()
+        else:
+            self._search_entry.set_text("")
+            self.show_view(self._view_before_search or settings.get("default_view"))
+
+    def _on_search_changed(self, entry: Gtk.SearchEntry) -> None:
+        if not self._search_button.get_active():
+            # Typing into the window opened the bar without the button
+            # knowing; keep the two in step.
+            self._search_button.set_active(True)
+        self._search_view.search(entry.get_text())
+
+    def _on_search_result(self, view, occurrence: Occurrence, source: Gtk.Widget) -> None:
+        """Clicking a result goes to its day, then opens it."""
+        self.stop_search()
+        self.go_to_day(occurrence.first_day)
+        self._on_event_activated(view, occurrence, source)
 
     # ------------------------------------------------------------------
     # Events

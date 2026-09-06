@@ -225,6 +225,72 @@ class IconPixels(unittest.TestCase):
         self.assertIs(tray._icon_pixmaps(), tray._icon_pixmaps())
 
 
+class ClickingTheTrayIcon(unittest.TestCase):
+    """The icon toggles: show, raise, hide.
+
+    The distinction that matters is between "visible" and "in front". A window
+    buried under a browser is visible, and clicking the tray icon then should
+    bring it forward — not hide something the user cannot even see.
+    """
+
+    def setUp(self):
+        import kairos.app as app_module
+        self.app_module = app_module
+
+        class FakeWindow:
+            def __init__(self):
+                self.visible = False
+                self.active = False
+                self.presented = 0
+
+            def get_visible(self):
+                return self.visible
+
+            def is_active(self):
+                return self.active
+
+            def present(self):
+                self.presented += 1
+                self.visible = True
+                self.active = True
+
+            def set_visible(self, visible):
+                self.visible = visible
+                if not visible:
+                    self.active = False
+
+        self.window = FakeWindow()
+        self.app = app_module.KairosApplication.__new__(app_module.KairosApplication)
+        self.app.window = self.window
+
+    def toggle(self):
+        self.app_module.KairosApplication.toggle_window(self.app)
+
+    def test_a_hidden_window_is_shown(self):
+        self.toggle()
+        self.assertTrue(self.window.visible)
+        self.assertEqual(self.window.presented, 1)
+
+    def test_a_window_in_front_is_hidden(self):
+        self.window.visible = self.window.active = True
+        self.toggle()
+        self.assertFalse(self.window.visible)
+
+    def test_a_buried_window_is_raised_not_hidden(self):
+        self.window.visible, self.window.active = True, False
+        self.toggle()
+        self.assertTrue(self.window.visible, "a buried window was hidden")
+        self.assertEqual(self.window.presented, 1)
+
+    def test_clicking_twice_returns_to_where_it_started(self):
+        self.toggle()
+        self.assertTrue(self.window.visible)
+        self.toggle()
+        self.assertFalse(self.window.visible)
+        self.toggle()
+        self.assertTrue(self.window.visible)
+
+
 class StartingAtLogin(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.mkdtemp(prefix="kairos-autostart-")

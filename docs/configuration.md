@@ -107,6 +107,16 @@ Defaults are what Kairos uses if the key is absent.
 | `default_alarm_minutes` | `10` | 0–40320 | Reminder a new event starts with. |
 | `week_starts_scrolled_to_now` | `true` | true / false | Open the week view near now rather than at midnight. |
 
+### Sidebar
+
+| Key | Default | Values | |
+|---|---|---|---|
+| `sidebar_show_upcoming` | `true` | true / false | Show the "Up next" list at all. |
+| `sidebar_upcoming_count` | `8` | 1–30 | How many events it lists. |
+| `sidebar_upcoming_days` | `30` | 1–365 | How far ahead it looks. |
+| `sidebar_upcoming_expanded` | `true` | true / false | Whether that section is folded. Set by clicking its heading. |
+| `sidebar_calendars_expanded` | `true` | true / false | The same, for the calendar list. |
+
 ### Running
 
 | Key | Default | Values | |
@@ -193,6 +203,13 @@ These are stable; treat them as the styling API.
 | `.kairos-agenda-row` | One event row in the agenda. |
 | `.kairos-agenda-time` | The time column in the agenda. |
 | `.kairos-calendar-dot` | The colour swatch beside a calendar's name. |
+| `.kairos-section-header` | A foldable sidebar heading. |
+| `.kairos-section-arrow` | Its disclosure triangle. |
+| `.kairos-upcoming` | The "Up next" list. |
+| `.kairos-upcoming-day` | A day heading within it. |
+| `.kairos-upcoming-row` | One event in it. |
+| `.kairos-upcoming-bar` | The calendar-coloured bar beside that event. |
+| `.kairos-upcoming-title` / `.kairos-upcoming-time` | Its two lines of text. |
 | `.kairos-mini-calendar` | The month in the sidebar. |
 | `.kairos-sidebar-heading` | The "CALENDARS" heading. |
 | `.kairos-detail-title` | The event title in the detail bubble. |
