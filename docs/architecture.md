@@ -254,6 +254,16 @@ the handler runs, libdbusmenu discards the error, and the menu draws perfectly
 while doing nothing. `tests/test_background.py` therefore asserts on the
 *declaration*, not just the handler.
 
+**A change-token is only true once the work behind it is done.** A CalDAV
+server's ctag means "nothing has changed since this", and `_sync_account`
+stores it so the next sync can skip the download. It must be stored *after*
+the events are in the cache, never before: a fetch that fails between the
+two leaves a token asserting a download that never happened, and because the
+token then matches on every later sync, the calendar can never fill up. It
+reads as "my calendars are there but they are all empty", which is a long
+way from "one request failed". `Storage.clear_tokens_for_empty_calendars`
+repairs caches spoiled by the version that got this wrong.
+
 **A drag must never move the widget being dragged.** `Gtk.GestureDrag`
 reports offsets from where the press landed *in the dragged widget's own
 coordinates*. Move that widget and the origin moves with it, so the offset

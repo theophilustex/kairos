@@ -184,6 +184,7 @@ class Storage:
                 (str(SCHEMA_VERSION),),
             )
             self._connection.commit()
+        self.clear_tokens_for_empty_calendars()
         # Parsed events, keyed by (calendar_id, uid, etag-or-length).  Parsing
         # iCalendar is the expensive part of a redraw; this makes repeat views
         # of the same month essentially free.
@@ -241,6 +242,36 @@ class Storage:
             "UPDATE events SET location = ?, description = ? WHERE rowid = ?",
             updates,
         )
+
+    def clear_tokens_for_empty_calendars(self) -> int:
+        """Forget the change-token of any calendar that holds no events.
+
+        A token says "you already have everything behind this". A calendar
+        with a token and nothing in it is therefore a contradiction, and it
+        is a self-sustaining one: the token makes every sync skip the
+        download, so the calendar can never fill up.
+
+        It was reachable through a bug — the token was saved before the
+        events were fetched, so a single failed fetch stuck the calendar
+        that way permanently. The bug is fixed; this repairs the caches it
+        already spoiled, and costs one query on start otherwise.
+        """
+        with self._lock:
+            stuck = self._connection.execute(
+                "SELECT id, name FROM calendars WHERE sync_token != ''"
+                " AND id NOT IN (SELECT DISTINCT calendar_id FROM events)"
+            ).fetchall()
+            if not stuck:
+                return 0
+            self._connection.executemany(
+                "UPDATE calendars SET sync_token = '' WHERE id = ?",
+                [(row["id"],) for row in stuck],
+            )
+            self._connection.commit()
+        for row in stuck:
+            log.info("“%s” has a change-token but no events; forgetting the "
+                     "token so the next sync downloads them", row["name"])
+        return len(stuck)
 
     def _rebuild_search_index(self) -> None:
         """Populate the index from the events, when it is not already.

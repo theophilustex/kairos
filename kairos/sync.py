@@ -585,13 +585,25 @@ class SyncManager(GObject.Object):
             else:
                 unchanged = False
 
+            # The server's change-token is only true once the events behind
+            # it are actually in the cache. Saving it first means a fetch
+            # that fails — a dropped connection, a certificate the machine
+            # did not trust yet — leaves the token claiming we are up to
+            # date, and every later sync skips the download. The calendar
+            # then sits there for ever with no events in it.
+            fresh_token = calendar.sync_token
+            calendar.sync_token = existing.sync_token if existing else ""
             self.storage.save_calendar(calendar)
+
             if unchanged:
                 log.debug("“%s” is unchanged; skipping download", calendar.name)
                 continue
 
             events = backend.fetch_events(calendar, window_start, window_end)
             self.storage.replace_calendar_events(calendar.id, events)
+
+            calendar.sync_token = fresh_token
+            self.storage.save_calendar(calendar)
             log.info("synced “%s”: %d events", calendar.name, len(events))
 
         # Calendars that vanished from the server are dropped locally too.

@@ -37,7 +37,21 @@ kairos --diagnose https://dav.example.com/ you@example.com
 
 It walks the same path Kairos does and says which step produced nothing.
 
-**Why this happens.** Kairos asks for events with a CalDAV `REPORT`. A
+**One cause is worth checking first**, because it is self-sustaining. A
+server hands out a *change-token* meaning "nothing has changed since this",
+and Kairos skips the download when the token it holds still matches. Until
+this was fixed, the token was saved before the events behind it were
+fetched — so one failed download (a dropped connection, a certificate not
+yet trusted) left a token claiming everything had already arrived, and every
+sync afterwards believed it. The calendar stayed empty for good.
+
+Kairos now saves the token only once the events are in the cache, and on
+start it forgets the token of any calendar that has one but no events — a
+contradiction that can only mean this happened. So an install already stuck
+this way fixes itself the next time it syncs; there is nothing to delete by
+hand.
+
+**Why else this happens.** Kairos asks for events with a CalDAV `REPORT`. A
 server that does not support one properly answers with *nothing* rather than
 with an error, which is indistinguishable from an empty calendar. Kairos
 therefore tries three routes in turn, stopping at the first that returns
