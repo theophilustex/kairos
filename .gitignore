@@ -22,3 +22,7 @@ kairos.db
 cache.db
 settings.json
 accounts.json
+
+# Left behind by 'AppImage --appimage-extract', which unpacks into the
+# current directory.
+squashfs-root/
