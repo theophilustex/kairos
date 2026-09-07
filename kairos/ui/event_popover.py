@@ -143,26 +143,72 @@ class EventPopover(Gtk.Popover):
 def confirm_delete(parent: Gtk.Widget, occurrence: Occurrence, on_confirm) -> None:
     """Ask before deleting, since there is no undo.
 
-    A repeating event says so explicitly, because deleting one deletes the
-    whole series — a limitation worth stating in the dialog rather than
-    burying in the README.
+    ``on_confirm`` is called with ``whole_series=True`` or ``False``.  For an
+    event that does not repeat there is nothing to choose and it is always
+    ``True`` — deleting the one occurrence *is* deleting the event.
     """
-    if occurrence.event.is_recurring:
-        body = (f"“{occurrence.summary}” repeats. Deleting it removes every "
-                f"occurrence, not just this one.")
-    else:
-        body = f"“{occurrence.summary}” will be removed from your calendar."
+    repeating = occurrence.recurrence_id is not None and occurrence.event.is_recurring
+    if not repeating:
+        dialog = Adw.AlertDialog(
+            heading="Delete this event?",
+            body=f"“{occurrence.summary}” will be removed from your calendar.")
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda _d, response: (
+            on_confirm(whole_series=True) if response == "delete" else None))
+        dialog.present(parent)
+        return
 
-    dialog = Adw.AlertDialog(heading="Delete this event?", body=body)
+    dialog = Adw.AlertDialog(
+        heading="Delete a repeating event",
+        body=(f"“{occurrence.summary}” repeats. Delete only the occurrence on "
+              f"{formatting.format_date(occurrence.start.date())}, or "
+              f"every one?"))
     dialog.add_response("cancel", "Cancel")
-    dialog.add_response("delete", "Delete")
-    dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+    dialog.add_response("this", "This event")
+    dialog.add_response("all", "All events")
+    dialog.set_response_appearance("this", Adw.ResponseAppearance.DESTRUCTIVE)
+    dialog.set_response_appearance("all", Adw.ResponseAppearance.DESTRUCTIVE)
     dialog.set_default_response("cancel")
     dialog.set_close_response("cancel")
 
     def on_response(_dialog, response: str) -> None:
-        if response == "delete":
-            on_confirm()
+        if response in ("this", "all"):
+            on_confirm(whole_series=response == "all")
+
+    dialog.connect("response", on_response)
+    dialog.present(parent)
+
+
+def ask_edit_scope(parent: Gtk.Widget, occurrence: Occurrence, on_choice) -> None:
+    """Ask whether an edit applies to one occurrence or the whole series.
+
+    Calls ``on_choice(whole_series=...)``, and does not ask at all when the
+    event does not repeat — there is only one answer then.
+    """
+    repeating = occurrence.recurrence_id is not None and occurrence.event.is_recurring
+    if not repeating:
+        on_choice(whole_series=True)
+        return
+
+    dialog = Adw.AlertDialog(
+        heading="Edit a repeating event",
+        body=(f"“{occurrence.summary}” repeats. Change only the occurrence on "
+              f"{formatting.format_date(occurrence.start.date())}, or "
+              f"every one?"))
+    dialog.add_response("cancel", "Cancel")
+    dialog.add_response("this", "This event")
+    dialog.add_response("all", "All events")
+    dialog.set_response_appearance("all", Adw.ResponseAppearance.SUGGESTED)
+    dialog.set_default_response("this")
+    dialog.set_close_response("cancel")
+
+    def on_response(_dialog, response: str) -> None:
+        if response in ("this", "all"):
+            on_choice(whole_series=response == "all")
 
     dialog.connect("response", on_response)
     dialog.present(parent)

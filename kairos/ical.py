@@ -23,7 +23,7 @@ about them:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import icalendar
 
@@ -259,6 +259,141 @@ def build_calendar(events: Event | list[Event]) -> icalendar.Calendar:
 def to_ical_text(events: Event | list[Event]) -> str:
     """The finished ``.ics`` document, as text ready to upload or cache."""
     return build_calendar(events).to_ical().decode("utf-8")
+
+
+# --------------------------------------------------------------------------
+# Single occurrences of a repeating series
+# --------------------------------------------------------------------------
+#
+# One CalDAV resource holds a whole series: a master VEVENT, plus one extra
+# VEVENT per modified instance carrying a RECURRENCE-ID naming the slot it
+# replaces.  Changing one occurrence therefore means rewriting the resource,
+# not writing a new one — which is why both of these take and return the
+# whole ``.ics`` document.
+
+
+def _master_of(calendar: icalendar.Calendar) -> icalendar.Event | None:
+    """The VEVENT describing the series itself, rather than an override."""
+    for component in calendar.walk("VEVENT"):
+        if component.get("RECURRENCE-ID") is None:
+            return component
+    return None
+
+
+def _same_slot(component, recurrence_id: datetime) -> bool:
+    """Whether an override component replaces ``recurrence_id``.
+
+    Compared as instants, so that a server naming the slot in UTC and one
+    naming it with a TZID agree.
+    """
+    value = component.get("RECURRENCE-ID")
+    if value is None:
+        return False
+    try:
+        moment, _ = _as_datetime(value.dt)
+    except ParseError:
+        return False
+    return moment == recurrence_id
+
+
+def exclude_occurrence(text: str, recurrence_id: datetime) -> str:
+    """Return ``text`` with one occurrence removed from the series.
+
+    Adds an ``EXDATE`` to the master and drops any override for that slot,
+    which is how iCalendar says "this instance does not happen" without
+    disturbing the rest of the series.
+    """
+    calendar = _parse(text)
+    master = _master_of(calendar)
+    if master is None:
+        raise ParseError("no master event to exclude an occurrence from")
+
+    # An override for the slot is now meaningless, and leaving it behind
+    # would resurrect the instance on clients that read it first.
+    for component in [c for c in calendar.walk("VEVENT")
+                      if _same_slot(c, recurrence_id)]:
+        calendar.subcomponents.remove(component)
+
+    existing = master.get("EXDATE")
+    if existing is not None and any(
+            _matches_exdate(existing, recurrence_id)):
+        return calendar.to_ical().decode("utf-8")   # already excluded
+
+    master.add("EXDATE", _as_utc(recurrence_id))
+    return calendar.to_ical().decode("utf-8")
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """The same instant, written to go on the wire as UTC.
+
+    Slots are named in UTC rather than in the series' own zone because
+    Python's local timezone often carries an *abbreviation* like "EDT" as its
+    name.  Written out that becomes ``TZID=EDT``, which is not a timezone
+    identifier any server can resolve and has no VTIMEZONE to define it —
+    Radicale rejects such a document outright with HTTP 400.  UTC needs no
+    definition, and every client compares these as instants anyway.
+    """
+    return moment.astimezone(timezone.utc)
+
+
+def _matches_exdate(existing, recurrence_id: datetime):
+    """Every already-excluded date equal to ``recurrence_id``."""
+    entries = existing if isinstance(existing, list) else [existing]
+    for entry in entries:
+        for value in getattr(entry, "dts", []):
+            try:
+                moment, _ = _as_datetime(value.dt)
+            except ParseError:
+                continue
+            if moment == recurrence_id:
+                yield moment
+
+
+def override_occurrence(text: str, recurrence_id: datetime, event: Event) -> str:
+    """Return ``text`` with one occurrence replaced by ``event``.
+
+    The override is a VEVENT sharing the series' UID, carrying a
+    ``RECURRENCE-ID`` naming the slot it replaces and *no* ``RRULE`` of its
+    own — a repeat rule on an override would mean a second series.
+    """
+    calendar = _parse(text)
+    if _master_of(calendar) is None:
+        raise ParseError("no master event to override an occurrence of")
+
+    for component in [c for c in calendar.walk("VEVENT")
+                      if _same_slot(c, recurrence_id)]:
+        calendar.subcomponents.remove(component)
+
+    component = build_component(event)
+    for name in ("RRULE", "EXDATE", "RDATE"):
+        component.pop(name, None)
+    component.add("RECURRENCE-ID", _as_utc(recurrence_id))
+    calendar.add_component(component)
+    return calendar.to_ical().decode("utf-8")
+
+
+def _parse(text: str) -> icalendar.Calendar:
+    try:
+        return icalendar.Calendar.from_ical(text)
+    except Exception as exc:
+        raise ParseError(f"could not parse calendar data: {exc}") from exc
+
+
+def bump_sequence(text: str) -> str:
+    """Return ``text`` with every VEVENT's ``SEQUENCE`` advanced by one.
+
+    Uploading a document as it stands still has to advertise a new revision,
+    and a series has a SEQUENCE per VEVENT — the master and each override.
+    """
+    calendar = _parse(text)
+    for component in calendar.walk("VEVENT"):
+        try:
+            current = int(component.get("SEQUENCE", 0))
+        except (TypeError, ValueError):
+            current = 0
+        component.pop("SEQUENCE", None)
+        component.add("SEQUENCE", current + 1)
+    return calendar.to_ical().decode("utf-8")
 
 
 # --------------------------------------------------------------------------

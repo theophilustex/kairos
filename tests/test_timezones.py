@@ -168,3 +168,97 @@ class AcrossSeveralZones(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheSystemZone(unittest.TestCase):
+    """``local_timezone`` must be a real zone, not a fixed offset.
+
+    It used to return ``datetime.now().astimezone().tzinfo``, which is a
+    snapshot: a fixed offset named for whichever DST period happens to be in
+    force. Two things broke.
+
+    A weekly 9am meeting written against a summer offset kept that offset all
+    winter, so the instant Kairos reminded you at moved by an hour once the
+    clocks changed. And the offset's *name* went onto the wire as
+    ``TZID=EDT``, which no server can resolve and which Radicale rejects with
+    HTTP 400.
+    """
+
+    def setUp(self):
+        import kairos.models
+        kairos.models._ZONE_CACHE = None
+        self._old_tz = os.environ.get("TZ")
+
+    def tearDown(self):
+        import kairos.models
+        kairos.models._ZONE_CACHE = None
+        if self._old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = self._old_tz
+
+    def zone(self, name):
+        os.environ["TZ"] = name
+        import kairos.models
+        kairos.models._ZONE_CACHE = None
+        return kairos.models.local_timezone()
+
+    def test_it_is_a_named_zone(self):
+        import zoneinfo
+        self.assertIsInstance(self.zone("Europe/Lisbon"), zoneinfo.ZoneInfo)
+
+    def test_it_honours_the_TZ_variable(self):
+        self.assertEqual(str(self.zone("Asia/Tokyo")), "Asia/Tokyo")
+
+    def test_an_unknown_zone_falls_back_rather_than_raising(self):
+        """Better a fixed offset than refusing to start."""
+        self.assertIsNotNone(self.zone("Not/ARealPlace"))
+
+    def test_the_written_tzid_is_resolvable(self):
+        """TZID=EDT is not a timezone; TZID=America/New_York is."""
+        import zoneinfo
+        from kairos import ical
+        from kairos.models import Event
+        tz = self.zone("America/New_York")
+        start = datetime(2026, 10, 20, 9, tzinfo=tz)
+        event = Event.new("cal", start, start + timedelta(minutes=30), "Standup")
+        line = next(l for l in ical.to_ical_text(event).splitlines()
+                    if l.startswith("DTSTART"))
+        self.assertIn("TZID=", line)
+        name = line.split("TZID=")[1].split(":")[0]
+        zoneinfo.ZoneInfo(name)          # raises if the server could not either
+
+    def test_a_weekly_event_keeps_its_wall_clock_across_dst(self):
+        from kairos import ical, recurrence
+        from kairos.models import Event
+        tz = self.zone("America/New_York")
+        start = datetime(2026, 10, 20, 9, tzinfo=tz)
+        event = Event.new("cal", start, start + timedelta(minutes=30), "Standup")
+        event.rrule = "FREQ=WEEKLY"
+        event.raw_ics = ical.to_ical_text(event)
+
+        found = recurrence.expand(
+            [event], datetime(2026, 10, 19, tzinfo=tz),
+            datetime(2026, 11, 30, tzinfo=tz))
+        self.assertTrue(found)
+        self.assertEqual({o.start.hour for o in found}, {9},
+                         "the meeting drifted off 9am across the DST change")
+
+    def test_the_instant_shifts_across_dst(self):
+        """9am local is a different instant either side of the change."""
+        from datetime import timezone
+        from kairos import ical, recurrence
+        from kairos.models import Event
+        tz = self.zone("America/New_York")
+        start = datetime(2026, 10, 20, 9, tzinfo=tz)
+        event = Event.new("cal", start, start + timedelta(minutes=30), "Standup")
+        event.rrule = "FREQ=WEEKLY"
+        event.raw_ics = ical.to_ical_text(event)
+
+        found = recurrence.expand(
+            [event], datetime(2026, 10, 19, tzinfo=tz),
+            datetime(2026, 11, 30, tzinfo=tz))
+        in_utc = {o.start.astimezone(timezone.utc).hour for o in found}
+        self.assertEqual(in_utc, {13, 14},
+                         "every instance sat at the same UTC hour, so the "
+                         "fixed offset is back")

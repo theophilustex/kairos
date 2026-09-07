@@ -15,15 +15,80 @@ means view code never has to ask "is this a date or a datetime?".
 
 from __future__ import annotations
 
+import os
 import uuid
+import zoneinfo
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, tzinfo
+from pathlib import Path
 from typing import Iterable
+
+#: Cached ``(TZ environment value, zone)``.  Looking the zone up means reading
+#: a file, and :func:`to_local` is called for every occurrence drawn.
+_ZONE_CACHE: tuple[str | None, tzinfo] | None = None
+
+
+def _zone_name() -> str | None:
+    """The system's IANA timezone name, e.g. ``"Europe/Lisbon"``."""
+    name = os.environ.get("TZ")
+    if name:
+        return name.lstrip(":")
+
+    # Debian and its derivatives keep the name here, one line.
+    try:
+        text = Path("/etc/timezone").read_text(encoding="utf-8").strip()
+        if text:
+            return text
+    except OSError:
+        pass
+
+    # Everywhere else /etc/localtime is a symlink into the zoneinfo database.
+    try:
+        target = Path("/etc/localtime").resolve()
+        parts = target.parts
+        if "zoneinfo" in parts:
+            return "/".join(parts[parts.index("zoneinfo") + 1:])
+    except OSError:
+        pass
+    return None
 
 
 def local_timezone() -> tzinfo:
-    """The machine's current timezone, as an aware tzinfo."""
-    return datetime.now().astimezone().tzinfo  # type: ignore[return-value]
+    """The machine's current timezone, as an aware tzinfo.
+
+    This returns a real :class:`zoneinfo.ZoneInfo` — ``Europe/Lisbon`` —
+    rather than the fixed offset ``datetime.now().astimezone()`` gives back,
+    and the difference matters twice over:
+
+    * **DST.** A fixed offset is a snapshot of today. A weekly 9am meeting
+      written against one would keep the summer offset all winter, so the
+      instant Kairos reminded you at drifted by an hour once the clocks
+      changed.
+    * **What goes on the wire.** The fixed offset is *named* for the current
+      period — "EDT", "BST" — and writing that out produces ``TZID=EDT``,
+      which is not a timezone any server can resolve and has no VTIMEZONE to
+      define it. Radicale rejects such a document outright.
+
+    Falls back to the fixed offset when the system zone cannot be identified,
+    which is better than failing to start.
+    """
+    global _ZONE_CACHE
+    requested = os.environ.get("TZ")
+    if _ZONE_CACHE is not None and _ZONE_CACHE[0] == requested:
+        return _ZONE_CACHE[1]
+
+    zone: tzinfo | None = None
+    name = _zone_name()
+    if name:
+        try:
+            zone = zoneinfo.ZoneInfo(name)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError, OSError):
+            zone = None
+    if zone is None:
+        zone = datetime.now().astimezone().tzinfo  # type: ignore[assignment]
+
+    _ZONE_CACHE = (requested, zone)
+    return zone
 
 
 def now_local() -> datetime:
@@ -288,6 +353,16 @@ class Occurrence:
     event: Event
     start: datetime
     end: datetime
+
+    #: Which slot of a repeating series this is, as the server names it —
+    #: the value a ``RECURRENCE-ID`` would carry, in the series' own timezone
+    #: rather than the local one.  ``None`` for an event that does not repeat.
+    #:
+    #: This is the *original* slot, which is not always :attr:`start`: an
+    #: instance already moved by another client sits at a different time from
+    #: the one the rule generated, and it is the rule's time that identifies
+    #: it.  Editing or deleting a single occurrence needs that identity.
+    recurrence_id: datetime | None = None
 
     # Pass-through accessors so view code can stay short.
     @property

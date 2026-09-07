@@ -33,7 +33,7 @@ from kairos.models import Occurrence, start_of_day
 from kairos.ui.agenda_view import AgendaView
 from kairos.ui.calendar_manager import CalendarManager
 from kairos.ui.event_editor import EventEditor
-from kairos.ui.event_popover import EventPopover, confirm_delete
+from kairos.ui.event_popover import EventPopover, ask_edit_scope, confirm_delete
 from kairos.ui.month_view import MonthView
 from kairos.ui.preferences import PreferencesDialog
 from kairos.ui.search_view import SearchView
@@ -634,12 +634,26 @@ class CalendarWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def _on_edit_requested(self, _popover, occurrence: Occurrence) -> None:
-        editor = EventEditor(self.sync.writable_calendars(), event=occurrence.event)
-        editor.connect("saved", lambda _e, event: self.sync.save_event(event))
-        editor.present(self)
+        """Edit an event, asking first which occurrences an edit should touch.
+
+        The question comes *before* the editor rather than after saving: what
+        you are editing changes what the fields mean, and being asked at the
+        end — having already made the change — is the wrong moment to find
+        out you were editing the whole series.
+        """
+        def open_editor(*, whole_series: bool) -> None:
+            editor = EventEditor(self.sync.writable_calendars(),
+                                 event=occurrence.event)
+            editor.connect("saved", lambda _e, event: self.sync.save_occurrence(
+                occurrence, event, whole_series=whole_series))
+            editor.present(self)
+
+        ask_edit_scope(self, occurrence, open_editor)
 
     def _on_delete_requested(self, _popover, occurrence: Occurrence) -> None:
-        confirm_delete(self, occurrence, lambda: self.sync.delete_event(occurrence.event))
+        confirm_delete(self, occurrence, lambda *, whole_series:
+                       self.sync.delete_occurrence(occurrence,
+                                                   whole_series=whole_series))
 
     # ------------------------------------------------------------------
     # Dialogs

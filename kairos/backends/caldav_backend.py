@@ -325,7 +325,16 @@ class CalDAVBackend(Backend):
         if calendar.read_only:
             raise BackendError(f"“{calendar.name}” is read-only.")
 
-        text = ical.to_ical_text(event.copy(sequence=event.sequence + 1))
+        # Send the resource we hold when we have one, rather than rebuilding
+        # it from the event. A repeating series is a whole document — master
+        # VEVENT, EXDATEs, and an override per changed instance — and an
+        # Event has nowhere to keep any of that, so regenerating here threw
+        # away every single-occurrence change on its way to the server.
+        # An empty raw_ics means "no document yet, build one".
+        if event.raw_ics:
+            text = ical.bump_sequence(event.raw_ics)
+        else:
+            text = ical.to_ical_text(event.copy(sequence=event.sequence + 1))
         href = event.href or self._url_for(calendar, event)
 
         headers = {"Content-Type": "text/calendar; charset=utf-8"}

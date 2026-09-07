@@ -66,7 +66,8 @@ def _instance_event(master: Event, instance, start: datetime, end: datetime) -> 
     return replace(master, **changed)
 
 
-def _occurrence(event: Event, start: datetime, end: datetime) -> Occurrence:
+def _occurrence(event: Event, start: datetime, end: datetime,
+                recurrence_id: datetime | None = None) -> Occurrence:
     """Build an occurrence, in the timezone the user is actually sitting in.
 
     This conversion is the whole reason this function exists.  A server keeps
@@ -78,8 +79,13 @@ def _occurrence(event: Event, start: datetime, end: datetime) -> Occurrence:
 
     Every occurrence therefore carries local time, and the views can go on
     treating ``.date()`` as "the day this belongs on".
+
+    ``recurrence_id`` is deliberately *not* converted: it identifies a slot
+    in the series to the server, and has to go back out matching what the
+    server sent.
     """
-    return Occurrence(event=event, start=to_local(start), end=to_local(end))
+    return Occurrence(event=event, start=to_local(start), end=to_local(end),
+                      recurrence_id=recurrence_id)
 
 
 def _clip(event: Event, window_start: datetime, window_end: datetime) -> list[Occurrence]:
@@ -124,8 +130,18 @@ def _expand_recurring(event: Event, window_start: datetime, window_end: datetime
         else:
             end = start + event.duration
 
+        # An overridden instance carries the slot it replaces; a plain one
+        # sits in the slot the rule generated, which is its own start.
+        moved = instance.get("RECURRENCE-ID")
+        slot = start
+        if moved is not None:
+            try:
+                slot, _ = ical._as_datetime(moved.dt)
+            except ical.ParseError:
+                pass
+
         occurrences.append(_occurrence(_instance_event(event, instance, start, end),
-                                       start, end))
+                                       start, end, recurrence_id=slot))
 
     if len(instances) > MAX_OCCURRENCES_PER_EVENT:
         log.warning("event %s produced more than %d occurrences; truncated",

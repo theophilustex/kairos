@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import gi
@@ -32,7 +33,7 @@ from kairos.accounts import AccountStore
 from kairos.backends import AuthenticationError, BackendError, backend_for
 from kairos.backends.local import LOCAL_ACCOUNT_ID, default_calendar
 from kairos.config import settings
-from kairos.models import Calendar, Event, local_timezone
+from kairos.models import Calendar, Event, Occurrence, local_timezone
 from kairos.storage import PENDING_DELETE, PENDING_SAVE, Storage
 
 log = logging.getLogger(__name__)
@@ -171,6 +172,82 @@ class SyncManager(GObject.Object):
         self.storage.mark_event_deleted(event.calendar_id, event.uid)
         self.emit("events-changed")
         self._run_in_background(self._push_pending, "deleting the event")
+
+    # ------------------------------------------------------------------
+    # One occurrence of a repeating series
+    # ------------------------------------------------------------------
+    #
+    # A repeating event lives in one resource on the server: a master VEVENT
+    # plus an override per changed instance.  Changing a single occurrence
+    # therefore rewrites that resource rather than writing a new one, and it
+    # must not go through :meth:`save_event`, which regenerates the whole
+    # document from the master and would throw every override away.
+
+    def save_occurrence(self, occurrence: Occurrence, edited: Event, *,
+                        whole_series: bool) -> None:
+        """Apply an edit to one occurrence, or to the series it belongs to."""
+        original = occurrence.event
+        if whole_series or not self._is_one_of_a_series(occurrence):
+            self.save_event(edited)
+            return
+
+        from kairos import ical
+        try:
+            text = ical.override_occurrence(
+                original.raw_ics or ical.to_ical_text(original),
+                occurrence.recurrence_id, edited)
+        except ical.ParseError as exc:
+            # Better to change the series than to lose the user's edit.
+            log.warning("cannot write an override for %s (%s); "
+                        "saving the whole series instead", original.uid, exc)
+            self.save_event(edited)
+            return
+        self._save_series_text(original, text)
+
+    def delete_occurrence(self, occurrence: Occurrence, *,
+                          whole_series: bool) -> None:
+        """Remove one occurrence, or the whole series."""
+        original = occurrence.event
+        if whole_series or not self._is_one_of_a_series(occurrence):
+            self.delete_event(original)
+            return
+
+        from kairos import ical
+        try:
+            text = ical.exclude_occurrence(
+                original.raw_ics or ical.to_ical_text(original),
+                occurrence.recurrence_id)
+        except ical.ParseError as exc:
+            log.warning("cannot exclude an occurrence of %s (%s); "
+                        "deleting the series instead", original.uid, exc)
+            self.delete_event(original)
+            return
+        self._save_series_text(original, text)
+
+    @staticmethod
+    def _is_one_of_a_series(occurrence: Occurrence) -> bool:
+        """Whether "just this one" is even a meaningful choice here."""
+        return (occurrence.recurrence_id is not None
+                and occurrence.event.is_recurring)
+
+    def _save_series_text(self, event: Event, text: str) -> None:
+        """Store a series' iCalendar exactly as given.
+
+        Unlike :meth:`save_event` this does not rebuild the document from the
+        event, because the document is the point: it carries the EXDATEs and
+        overrides that the :class:`Event` itself has no room for.
+        """
+        calendar = self.storage.get_calendar(event.calendar_id)
+        if calendar is None:
+            log.error("refusing to save into unknown calendar %s", event.calendar_id)
+            return
+
+        needs_push = not calendar.is_local
+        self.storage.save_event(replace(event, raw_ics=text),
+                                pending=PENDING_SAVE if needs_push else 0)
+        self.emit("events-changed")
+        if needs_push:
+            self._run_in_background(self._push_pending, "saving your change")
 
     # ------------------------------------------------------------------
     # Calendars

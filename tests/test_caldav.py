@@ -334,3 +334,136 @@ class SyncRoundTrip(CalDAVServerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SingleOccurrences(CalDAVServerTestCase):
+    """Changing one instance of a repeating series, against a real server.
+
+    A series is one resource holding a master VEVENT plus an override per
+    changed instance, so "just this one" means rewriting that resource — not
+    writing a second one. These check the round trip through Radicale, since
+    that is the only way to know the document we produce is one a server will
+    accept and hand back unchanged.
+    """
+
+    def weekly(self, summary="Standup"):
+        """A weekly series starting a week ago, saved to the server."""
+        start = (self.now - timedelta(days=7)).replace(hour=9)
+        event = Event.new(self.calendar.id, start, start + timedelta(minutes=30),
+                          summary)
+        event.rrule = "FREQ=WEEKLY"
+        return self.backend.save_event(self.calendar, event)
+
+    def occurrences(self, event, days=21):
+        from kairos import recurrence
+        return recurrence.expand([event],
+                                 self.now - timedelta(days=8),
+                                 self.now + timedelta(days=days))
+
+    def stored(self):
+        """The single event resource, freshly fetched."""
+        events = self.fetch()
+        self.assertEqual(len(events), 1, "expected exactly one resource")
+        return events[0]
+
+    def push(self, event, text):
+        """Save a rewritten series document through the backend."""
+        from dataclasses import replace as dataclass_replace
+        return self.backend.save_event(self.calendar,
+                                       dataclass_replace(event, raw_ics=text))
+
+    # -- deleting one -------------------------------------------------
+
+    def test_excluding_one_occurrence_leaves_the_rest(self):
+        from kairos import ical
+        saved = self.weekly()
+        before = self.occurrences(saved)
+        self.assertGreaterEqual(len(before), 3)
+
+        target = before[1]
+        self.push(saved, ical.exclude_occurrence(saved.raw_ics,
+                                                 target.recurrence_id))
+
+        after = self.occurrences(self.stored())
+        self.assertEqual(len(after), len(before) - 1)
+        self.assertNotIn(target.recurrence_id, [o.recurrence_id for o in after])
+
+    def test_excluding_does_not_delete_the_resource(self):
+        from kairos import ical
+        saved = self.weekly()
+        target = self.occurrences(saved)[1]
+        self.push(saved, ical.exclude_occurrence(saved.raw_ics,
+                                                 target.recurrence_id))
+        self.assertEqual(len(self.fetch()), 1)
+
+    # -- editing one --------------------------------------------------
+
+    def test_overriding_one_occurrence_changes_only_that_one(self):
+        from dataclasses import replace as dataclass_replace
+        from kairos import ical
+        saved = self.weekly()
+        before = self.occurrences(saved)
+        target = before[1]
+
+        edited = dataclass_replace(
+            saved, summary="Moved this week", rrule="", raw_ics="",
+            start=target.start + timedelta(hours=5),
+            end=target.end + timedelta(hours=5))
+        self.push(saved, ical.override_occurrence(
+            saved.raw_ics, target.recurrence_id, edited))
+
+        after = self.occurrences(self.stored())
+        self.assertEqual(len(after), len(before))
+        moved = [o for o in after if o.summary == "Moved this week"]
+        self.assertEqual(len(moved), 1, "the override did not come back")
+        self.assertEqual(moved[0].start, target.start + timedelta(hours=5))
+
+    def test_the_other_occurrences_keep_the_series_name(self):
+        from dataclasses import replace as dataclass_replace
+        from kairos import ical
+        saved = self.weekly()
+        target = self.occurrences(saved)[1]
+        edited = dataclass_replace(saved, summary="Moved this week",
+                                   rrule="", raw_ics="")
+        self.push(saved, ical.override_occurrence(
+            saved.raw_ics, target.recurrence_id, edited))
+
+        after = self.occurrences(self.stored())
+        others = [o for o in after if o.summary != "Moved this week"]
+        self.assertEqual({o.summary for o in others}, {"Standup"})
+
+    def test_an_override_can_be_replaced(self):
+        """Editing the same occurrence twice must not stack up overrides."""
+        from dataclasses import replace as dataclass_replace
+        from kairos import ical
+        saved = self.weekly()
+        target = self.occurrences(saved)[1]
+
+        for name in ("First change", "Second change"):
+            current = self.stored()
+            edited = dataclass_replace(current, summary=name, rrule="", raw_ics="")
+            self.push(current, ical.override_occurrence(
+                current.raw_ics, target.recurrence_id, edited))
+
+        after = self.occurrences(self.stored())
+        self.assertEqual([o.summary for o in after].count("Second change"), 1)
+        self.assertEqual([o.summary for o in after].count("First change"), 0)
+
+    def test_an_overridden_occurrence_can_then_be_excluded(self):
+        from dataclasses import replace as dataclass_replace
+        from kairos import ical
+        saved = self.weekly()
+        before = self.occurrences(saved)
+        target = before[1]
+
+        edited = dataclass_replace(saved, summary="Moved", rrule="", raw_ics="")
+        self.push(saved, ical.override_occurrence(
+            saved.raw_ics, target.recurrence_id, edited))
+
+        current = self.stored()
+        self.push(current, ical.exclude_occurrence(current.raw_ics,
+                                                   target.recurrence_id))
+
+        after = self.occurrences(self.stored())
+        self.assertEqual(len(after), len(before) - 1)
+        self.assertNotIn("Moved", [o.summary for o in after])
