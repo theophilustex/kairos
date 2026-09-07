@@ -138,3 +138,129 @@ class NextOccurrence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SERIES_WITH_OVERRIDE = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Kairos tests//EN
+BEGIN:VEVENT
+UID:weekly-1
+DTSTAMP:20260901T090000Z
+DTSTART;TZID=UTC:20260901T090000
+DTEND;TZID=UTC:20260901T093000
+SUMMARY:Standup
+LOCATION:Room 1
+RRULE:FREQ=WEEKLY
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+TRIGGER:-PT10M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:weekly-1
+RECURRENCE-ID;TZID=UTC:20260908T090000
+DTSTAMP:20260901T090000Z
+DTSTART;TZID=UTC:20260908T150000
+DTEND;TZID=UTC:20260908T153000
+SUMMARY:Standup (moved)
+LOCATION:Room 9
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+TRIGGER:-PT45M
+END:VALARM
+END:VEVENT
+END:VCALENDAR
+"""
+
+
+class ModifiedInstances(unittest.TestCase):
+    """A single occurrence changed in another client — RECURRENCE-ID.
+
+    ``recurring-ical-events`` applies the override's *times* by itself, so
+    those were always right. The occurrence's text was not: it is read from
+    the event object, and every instance pointed at the master, so a meeting
+    moved and renamed for one week appeared at the new time under the old
+    name. These pin the whole override.
+    """
+
+    def setUp(self):
+        self.events = ical.parse_calendar_text(SERIES_WITH_OVERRIDE, "cal")
+        for event in self.events:
+            event.raw_ics = SERIES_WITH_OVERRIDE
+        self.found = recurrence.expand(
+            self.events, at(2026, 9, 1), at(2026, 9, 22))
+
+    def instance_on(self, day):
+        matches = [o for o in self.found if o.start.date() == day]
+        self.assertEqual(len(matches), 1, f"expected one occurrence on {day}")
+        return matches[0]
+
+    def moved(self):
+        """The overridden instance, whichever local day it landed on."""
+        matches = [o for o in self.found if "moved" in o.summary]
+        self.assertEqual(len(matches), 1, "the overridden instance is missing")
+        return matches[0]
+
+    def test_only_the_master_becomes_an_event(self):
+        """The override is part of the series, not a second entry."""
+        self.assertEqual(len(self.events), 1)
+
+    def test_the_series_still_produces_three_instances(self):
+        self.assertEqual(len(self.found), 3)
+
+    def test_the_override_keeps_its_own_summary(self):
+        self.assertEqual(self.moved().summary, "Standup (moved)")
+
+    def test_the_override_keeps_its_own_location(self):
+        self.assertEqual(self.moved().event.location, "Room 9")
+
+    def test_the_override_keeps_its_own_reminder(self):
+        self.assertEqual([a.minutes_before for a in self.moved().event.alarms], [45])
+
+    def test_the_override_moves_to_its_new_time(self):
+        """15:00 UTC, shown on the user's clock like every other occurrence."""
+        from datetime import timezone
+        expected = datetime(2026, 9, 8, 15, tzinfo=timezone.utc).astimezone(
+            local_timezone())
+        self.assertEqual(self.moved().start, expected)
+
+    def test_the_unmoved_instances_keep_the_series_time(self):
+        from datetime import timezone
+        expected = datetime(2026, 9, 1, 9, tzinfo=timezone.utc).astimezone(
+            local_timezone())
+        self.assertEqual(self.instance_on(expected.date()).start, expected)
+
+    def test_the_other_instances_keep_the_series_summary(self):
+        others = [o for o in self.found if "moved" not in o.summary]
+        self.assertEqual({o.summary for o in others}, {"Standup"})
+
+    def test_the_other_instances_keep_the_series_location(self):
+        others = [o for o in self.found if "moved" not in o.summary]
+        self.assertEqual({o.event.location for o in others}, {"Room 1"})
+
+    def test_the_other_instances_keep_the_series_reminder(self):
+        others = [o for o in self.found if "moved" not in o.summary]
+        for occurrence in others:
+            self.assertEqual([a.minutes_before for a in occurrence.event.alarms], [10])
+
+    def test_the_master_event_is_not_mutated(self):
+        """The override must not leak into the series it came from."""
+        self.assertEqual(self.events[0].summary, "Standup")
+        self.assertEqual(self.events[0].location, "Room 1")
+
+    def test_every_instance_still_refers_to_the_same_resource(self):
+        """Editing or deleting one must still find the right thing on the server."""
+        self.assertEqual({o.uid for o in self.found}, {"weekly-1"})
+
+
+class UnmodifiedSeries(unittest.TestCase):
+    """The common case must not pay for the override handling."""
+
+    def test_instances_share_the_master_event_object(self):
+        event = make("Daily", at(2026, 9, 1, 9), at(2026, 9, 1, 10), "FREQ=DAILY")
+        found = recurrence.expand([event], at(2026, 9, 1), at(2026, 9, 5))
+        self.assertTrue(found)
+        for occurrence in found:
+            self.assertIs(occurrence.event, event)

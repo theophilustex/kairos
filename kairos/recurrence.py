@@ -14,6 +14,7 @@ translation.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 
 import icalendar
@@ -28,6 +29,41 @@ log = logging.getLogger(__name__)
 #: occurrences.  Views only ever show weeks or months, so this cap simply
 #: protects us from a pathological rule; it is never reached in normal use.
 MAX_OCCURRENCES_PER_EVENT = 2000
+
+
+def _instance_event(master: Event, instance, start: datetime, end: datetime) -> Event:
+    """The event one instance should be shown as.
+
+    ``recurring-ical-events`` applies a ``RECURRENCE-ID`` override to the
+    instance's *times* for us, and hands back a component carrying that
+    override's own text as well.  An :class:`Occurrence` reads its summary
+    and location from the event it points at, though, so without this the
+    master's text was used for every instance and a meeting moved and
+    renamed for one week showed the series' name at the new time.
+
+    Returns the master itself when nothing was overridden, so the common
+    case allocates nothing.
+    """
+    changed: dict = {}
+    for name, attribute in (("SUMMARY", "summary"),
+                            ("LOCATION", "location"),
+                            ("DESCRIPTION", "description")):
+        value = instance.get(name)
+        if value is not None and str(value) != getattr(master, attribute):
+            changed[attribute] = str(value)
+
+    # Only when the instance actually carries alarms of its own: an instance
+    # without any means "not overridden", not "no reminders".
+    if any(instance.walk("VALARM")):
+        alarms = ical._read_alarms(instance, start, end)
+        if alarms != master.alarms:
+            changed["alarms"] = alarms
+
+    if not changed:
+        return master
+    # The copy keeps the master's uid and href, so editing or deleting the
+    # occurrence still finds the right resource on the server.
+    return replace(master, **changed)
 
 
 def _occurrence(event: Event, start: datetime, end: datetime) -> Occurrence:
@@ -88,7 +124,8 @@ def _expand_recurring(event: Event, window_start: datetime, window_end: datetime
         else:
             end = start + event.duration
 
-        occurrences.append(_occurrence(event, start, end))
+        occurrences.append(_occurrence(_instance_event(event, instance, start, end),
+                                       start, end))
 
     if len(instances) > MAX_OCCURRENCES_PER_EVENT:
         log.warning("event %s produced more than %d occurrences; truncated",
