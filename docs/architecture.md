@@ -64,6 +64,7 @@ kairos/
   sync.py           the worker thread; owns the cache and the accounts
   notifications.py  planning and firing reminders; PendingReminder
   tray.py           the taskbar icon, spoken over D-Bus by hand
+  oauth.py          the OAuth sign-in for providers that refuse a password
   autostart.py      the login .desktop file
   formatting.py     every user-visible date string
   theming.py        stylesheets, accent colour, icon search path

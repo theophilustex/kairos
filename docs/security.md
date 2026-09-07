@@ -150,3 +150,27 @@ kairos/storage.py                  # the only file that touches SQL
 # The tests that hold it in place
 python3 -m unittest tests.test_security -v
 ```
+
+---
+
+## OAuth accounts
+
+Google is signed in to with the authorization-code flow and PKCE, over a
+redirect to `127.0.0.1` on a port chosen for the occasion. Three consequences
+worth stating:
+
+- **Your password is never typed into Kairos.** It goes into Google's own page
+  in your own browser. Kairos receives a token, and cannot see the password
+  even briefly.
+- **PKCE, not the client secret, is what makes the exchange safe.** A desktop
+  application cannot keep a secret — anyone can read it out of the config — so
+  the secret proves nothing on its own. The verifier is generated per sign-in
+  and never leaves the process, so no other program on the machine can spend a
+  code it did not ask for.
+- **The listener is loopback-only and serves one request.** It binds
+  `127.0.0.1`, so nothing off the machine can reach it, and it checks the
+  `state` value before accepting the code, so a redirect aimed at that port by
+  something else is rejected.
+
+The refresh token and client secret live in the keyring; access tokens stay in
+memory. `AccountStore.remove` deletes all three.

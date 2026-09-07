@@ -86,7 +86,10 @@ class AccountStore:
         if account_id == LOCAL_ACCOUNT_ID:
             return
         self._accounts.pop(account_id, None)
-        credentials.delete_password(account_id)
+        # Not just the password: an OAuth account also has a refresh token and
+        # a client secret in the keyring, and leaving those behind would be a
+        # live credential for a server the user has told us to forget.
+        credentials.forget_account(account_id)
         self.save()
 
     # -- persistence ------------------------------------------------------

@@ -13,8 +13,10 @@ dialog says so plainly rather than quietly writing the password to disk.
 from __future__ import annotations
 
 import logging
+import secrets
 import threading
 import uuid
+from urllib.parse import quote
 
 import gi
 
@@ -95,6 +97,8 @@ class AccountDialog(Adw.Dialog):
 
         toolbar.set_content(content)
         self.set_child(toolbar)
+        # The primary button exists by now, which _sync_kind_rows relabels.
+        self._sync_kind_rows()
 
     def _server_group(self) -> Adw.PreferencesGroup:
         group = Adw.PreferencesGroup(title="Server")
@@ -102,6 +106,16 @@ class AccountDialog(Adw.Dialog):
             "Enter the CalDAV address your provider gave you — for example "
             "https://dav.example.com/calendars/you/"
         )
+
+        # Google refuses Basic authentication on its CalDAV endpoint, so it
+        # cannot be reached with a password at all — even an app password.
+        # It is a separate kind of account rather than a different URL.
+        self._kind_row = Adw.ComboRow(
+            title="Account type",
+            model=Gtk.StringList.new(["CalDAV server", "Google"]),
+        )
+        self._kind_row.connect("notify::selected", lambda *_: self._sync_kind_rows())
+        group.add(self._kind_row)
 
         self._name_row = Adw.EntryRow(title="Account name")
         group.add(self._name_row)
@@ -116,6 +130,28 @@ class AccountDialog(Adw.Dialog):
         self._password_row = Adw.PasswordEntryRow(title="Password")
         self._password_row.connect("entry-activated", lambda *_: self._on_primary_clicked(None))
         group.add(self._password_row)
+
+        self._email_row = Adw.EntryRow(title="Google address")
+        group.add(self._email_row)
+
+        self._client_id_row = Adw.EntryRow(title="OAuth client ID")
+        group.add(self._client_id_row)
+
+        self._client_secret_row = Adw.PasswordEntryRow(title="OAuth client secret")
+        group.add(self._client_secret_row)
+
+        self._oauth_help = Adw.ActionRow(
+            title="Where these come from",
+            subtitle=(
+                "Google requires each application to be registered. In the "
+                "Google Cloud console, enable the Calendar API and create an "
+                "OAuth client of type “Desktop app”; it gives you an ID and a "
+                "secret. Kairos never sees your Google password — you type it "
+                "on Google's own page."
+            ),
+        )
+        self._oauth_help.set_subtitle_lines(0)
+        group.add(self._oauth_help)
 
         self._verify_row = Adw.SwitchRow(
             title="Verify the security certificate",
@@ -138,6 +174,21 @@ class AccountDialog(Adw.Dialog):
 
         return group
 
+    @property
+    def _is_google(self) -> bool:
+        return self._kind_row.get_selected() == 1
+
+    def _sync_kind_rows(self) -> None:
+        """Show only the fields the chosen kind of account actually needs."""
+        google = self._is_google
+        for row in (self._url_row, self._username_row, self._password_row,
+                    self._verify_row):
+            row.set_visible(not google)
+        for row in (self._email_row, self._client_id_row,
+                    self._client_secret_row, self._oauth_help):
+            row.set_visible(google)
+        self._primary.set_label("Sign in" if google else "Connect")
+
     def _calendars_group(self) -> Adw.PreferencesGroup:
         self._calendar_group = Adw.PreferencesGroup(title="Calendars")
         self._calendar_group.set_description("Connect first, then choose what to show.")
@@ -145,6 +196,13 @@ class AccountDialog(Adw.Dialog):
         return self._calendar_group
 
     def _prefill(self, account: Account) -> None:
+        if account.uses_oauth:
+            self._kind_row.set_selected(1)
+            self._email_row.set_text(account.username)
+            self._client_id_row.set_text(account.oauth_client_id)
+            secret = credentials.get_client_secret(account.id)
+            if secret:
+                self._client_secret_row.set_text(secret)
         self._name_row.set_text(account.name)
         self._url_row.set_text(account.url)
         self._username_row.set_text(account.username)
@@ -166,6 +224,83 @@ class AccountDialog(Adw.Dialog):
             self._connect()
 
     def _connect(self) -> None:
+        if self._is_google:
+            self._sign_in_with_google()
+            return
+        self._connect_to_server()
+
+    # -- Google -------------------------------------------------------
+
+    def _sign_in_with_google(self) -> None:
+        """Open Google's consent page and wait for the browser to come back.
+
+        Everything slow happens on a worker thread: opening a browser, and
+        then waiting — possibly minutes — for someone to finish typing a
+        password and a second factor. Blocking the UI thread for that would
+        freeze the whole application.
+        """
+        from kairos import oauth
+
+        email = self._email_row.get_text().strip()
+        client_id = self._client_id_row.get_text().strip()
+        client_secret = self._client_secret_row.get_text().strip()
+        if not (email and client_id and client_secret):
+            self._show_error(
+                "Fill in your Google address and the OAuth client ID and secret.")
+            return
+
+        account = Account(
+            id=self._existing.id if self._existing else uuid.uuid4().hex,
+            name=self._name_row.get_text().strip() or email,
+            kind=CALDAV,
+            url=oauth.GOOGLE.caldav_url.format(user=quote(email, safe="@")),
+            username=email,
+            oauth_provider="google",
+            oauth_client_id=client_id,
+        )
+
+        self._set_busy(True)
+        self._banner.set_title("Waiting for Google in your browser…")
+        self._banner.set_revealed(True)
+
+        def worker() -> None:
+            try:
+                verifier = oauth.make_verifier()
+                state = secrets.token_urlsafe(24)
+                with oauth.LoopbackReceiver() as receiver:
+                    url = oauth.authorization_url(
+                        oauth.GOOGLE, client_id, receiver.redirect_uri,
+                        verifier, state)
+                    if not oauth.open_in_browser(url):
+                        GLib.idle_add(
+                            self._on_failed,
+                            "Could not open a browser to sign in to Google.")
+                        return
+                    code = receiver.wait_for_code(state)
+                    token = oauth.exchange_code(
+                        oauth.GOOGLE, client_id, client_secret, code, verifier,
+                        receiver.redirect_uri)
+
+                credentials.set_client_secret(account.id, client_secret)
+                credentials.set_refresh_token(account.id, token.refresh_token)
+
+                backend = CalDAVBackend(account)
+                found = backend.discover_calendars()
+                GLib.idle_add(self._on_connected, account, "", found)
+            except oauth.OAuthError as exc:
+                GLib.idle_add(self._on_failed, str(exc))
+            except (AuthenticationError, BackendError) as exc:
+                GLib.idle_add(self._on_failed, str(exc))
+            except Exception as exc:
+                log.exception("unexpected failure signing in to Google")
+                GLib.idle_add(self._on_failed,
+                              f"Could not sign in: {exc.__class__.__name__}")
+
+        threading.Thread(target=worker, name="kairos-oauth", daemon=True).start()
+
+    # -- an ordinary CalDAV server ------------------------------------
+
+    def _connect_to_server(self) -> None:
         """Validate the form, then talk to the server on a worker thread."""
         try:
             url = validate_calendar_url(

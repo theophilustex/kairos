@@ -238,6 +238,29 @@ class CredentialStore:
                 log.error("could not read password from keyring: %s", exc)
         return self._session_only.get(account_id)
 
+    # OAuth accounts keep two more secrets: the refresh token, which is a
+    # long-lived credential and belongs in the keyring exactly as a password
+    # does, and the client secret. Both are keyed off the account id with a
+    # suffix, so one account's entries stay together.
+
+    def set_refresh_token(self, account_id: str, token: str) -> bool:
+        return self.set_password(f"{account_id}:refresh", token)
+
+    def get_refresh_token(self, account_id: str) -> str | None:
+        return self.get_password(f"{account_id}:refresh")
+
+    def set_client_secret(self, account_id: str, secret: str) -> bool:
+        return self.set_password(f"{account_id}:client-secret", secret)
+
+    def get_client_secret(self, account_id: str) -> str | None:
+        return self.get_password(f"{account_id}:client-secret")
+
+    def forget_account(self, account_id: str) -> None:
+        """Remove every secret belonging to one account."""
+        for key in (account_id, f"{account_id}:refresh",
+                    f"{account_id}:client-secret"):
+            self.delete_password(key)
+
     def delete_password(self, account_id: str) -> None:
         self._session_only.pop(account_id, None)
         if not self.available:

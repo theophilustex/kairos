@@ -23,6 +23,7 @@ from datetime import datetime
 from urllib.parse import quote, unquote, urlparse
 
 import caldav
+import requests
 from caldav.elements import dav, ical as ical_elements
 from caldav.lib import error as caldav_error
 
@@ -69,6 +70,66 @@ class CalDAVBackend(Backend):
         self._password = password if password is not None else credentials.get_password(account.id)
         self._client: caldav.DAVClient | None = None
         self._principal = None
+        self._token = None
+
+    # ------------------------------------------------------------------
+    # OAuth accounts
+    # ------------------------------------------------------------------
+
+    def _bearer_token(self) -> str:
+        """A live access token, refreshed if the one we hold has lapsed.
+
+        Access tokens last about an hour, so a long-running Kairos will
+        refresh several times a day. Only the refresh token is stored; the
+        access token stays in memory for the life of this backend.
+        """
+        from kairos import oauth
+
+        if self._token is not None and not self._token.expired:
+            return self._token.access_token
+
+        provider = oauth.PROVIDERS.get(self.account.oauth_provider)
+        if provider is None:
+            raise BackendError(
+                f"Kairos does not know how to sign in to "
+                f"“{self.account.oauth_provider}”.")
+
+        try:
+            self._token = oauth.refresh(
+                provider,
+                self.account.oauth_client_id,
+                credentials.get_client_secret(self.account.id) or "",
+                credentials.get_refresh_token(self.account.id) or "",
+                timeout=settings.get_int("network_timeout_seconds"),
+            )
+        except oauth.OAuthError as exc:
+            # A refresh token is revoked when the user changes their password
+            # or withdraws access, and no amount of retrying will fix it.
+            raise AuthenticationError(str(exc)) from exc
+
+        # A provider may hand back a rotated refresh token; keeping the old
+        # one would sign the account out at the next refresh.
+        stored = credentials.get_refresh_token(self.account.id) or ""
+        if self._token.refresh_token and self._token.refresh_token != stored:
+            credentials.set_refresh_token(self.account.id, self._token.refresh_token)
+        return self._token.access_token
+
+    def _bearer_auth(self):
+        """A requests auth object that puts a live token on every request.
+
+        Fetching the token inside the auth callable rather than once when the
+        client is built is what makes an expiry mid-session a non-event: the
+        next request refreshes and carries on, instead of failing until
+        Kairos is restarted.
+        """
+        backend = self
+
+        class BearerAuth(requests.auth.AuthBase):
+            def __call__(self, request):
+                request.headers["Authorization"] = f"Bearer {backend._bearer_token()}"
+                return request
+
+        return BearerAuth()
 
     # ------------------------------------------------------------------
     # Connection
@@ -91,10 +152,15 @@ class CalDAVBackend(Backend):
         if not verify:
             log.warning("TLS verification is disabled for account %s", self.account.name)
 
+        # An OAuth account sends a bearer token instead of a username and
+        # password — Google's CalDAV endpoint refuses Basic auth outright,
+        # so there is nothing to put in those fields.
+        oauth = self.account.uses_oauth
         self._client = caldav.DAVClient(
             url=url,
-            username=self.account.username or None,
-            password=self._password or None,
+            username=None if oauth else (self.account.username or None),
+            password=None if oauth else (self._password or None),
+            auth=self._bearer_auth() if oauth else None,
             ssl_verify_cert=verify,
             timeout=settings.get_int("network_timeout_seconds"),
         )

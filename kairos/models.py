@@ -136,10 +136,21 @@ class Account:
     username: str = ""
     verify_tls: bool = True
     enabled: bool = True
+    #: Which OAuth provider signs this account in, or "" for a password.
+    #: Google is the reason: its CalDAV endpoint refuses Basic auth, so a
+    #: password — even an app password — is not an option there.
+    oauth_provider: str = ""
+    #: The OAuth client the user registered. Public by design; the matching
+    #: secret and the refresh token live in the keyring.
+    oauth_client_id: str = ""
 
     @property
     def is_local(self) -> bool:
         return self.kind == LOCAL
+
+    @property
+    def uses_oauth(self) -> bool:
+        return bool(self.oauth_provider)
 
     def to_json(self) -> dict:
         return {
@@ -150,6 +161,8 @@ class Account:
             "username": self.username,
             "verify_tls": self.verify_tls,
             "enabled": self.enabled,
+            "oauth_provider": self.oauth_provider,
+            "oauth_client_id": self.oauth_client_id,
         }
 
     @classmethod
@@ -162,6 +175,8 @@ class Account:
             username=str(raw.get("username") or ""),
             verify_tls=bool(raw.get("verify_tls", True)),
             enabled=bool(raw.get("enabled", True)),
+            oauth_provider=str(raw.get("oauth_provider") or ""),
+            oauth_client_id=str(raw.get("oauth_client_id") or ""),
         )
 
 

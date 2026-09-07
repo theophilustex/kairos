@@ -54,12 +54,52 @@ authentication will reject your normal password. Generate an app-specific
 password in the provider's settings and use that. It is also safer: it can be
 revoked without changing your account password.
 
-**Google Calendar is not supported.** It requires OAuth rather than a
-password, which Kairos does not implement. Its CalDAV endpoint will refuse a
-plain username and password.
+**Google** needs a sign-in rather than a password — see below.
 
 A bare host is fine — type `dav.example.com/calendars/` and Kairos will assume
 `https://`.
+
+---
+
+## Google
+
+Google's CalDAV endpoint refuses Basic authentication, so there is no password
+or app password that will work. Kairos signs in with OAuth instead: you type
+your password on **Google's own page** in your browser, and Kairos only ever
+receives a token.
+
+Google requires every application to be registered, and Kairos is not
+registered on your behalf — a shipped client would be shared by every user of
+every copy, and Google's caps and consent screen are per-application. So you
+create one, once:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a
+   project (any name).
+2. Enable the **Google Calendar API** for it.
+3. Under *APIs & Services → Credentials*, create an **OAuth client ID** of
+   type **Desktop app**. Google shows you a client ID and a client secret.
+4. If it asks you to configure a consent screen, choose *External*, fill in
+   the required names, and add your own address under *Test users*.
+
+Then in Kairos: <kbd>Ctrl</kbd>+<kbd>L</kbd> → **Add**, set *Account type* to
+**Google**, and enter your Google address along with that ID and secret.
+Kairos opens your browser; approve the request and the window comes back with
+your calendars.
+
+**What is stored where.** The client ID goes in `accounts.json`; it is not
+secret. The client secret and the refresh token go in the system keyring
+beside your passwords. Access tokens last about an hour and are never written
+to disk. Removing the account deletes all of it.
+
+**If it stops working**, the refresh token has been withdrawn — changing your
+Google password does that, as does revoking access at
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions),
+and a consent screen left in *Testing* expires them after seven days. Edit the
+account and sign in again.
+
+> Kairos's OAuth flow is tested against a local authorisation server, not
+> against Google. If you hit something the documentation above does not
+> explain, that is worth reporting.
 
 ---
 
