@@ -207,8 +207,29 @@ class Searching(WithCalendars):
     def test_it_matches_the_notes(self):
         self.assertEqual(self.titles("grid"), ["Design review"])
 
-    def test_it_matches_part_of_a_word(self):
-        self.assertEqual(self.titles("re"), ["Dentist", "Design review"])
+    def test_it_matches_the_start_of_a_word(self):
+        """Results appear while you are still typing the word."""
+        self.assertEqual(self.titles("re"), ["Design review"])
+        self.assertEqual(self.titles("dent"), ["Dentist"])
+
+    def test_it_does_not_match_the_middle_of_a_word(self):
+        """"ent" is inside "Dentist", but a search box matches word starts."""
+        self.assertEqual(self.titles("ent"), [])
+
+    def test_several_words_must_all_match(self):
+        self.assertEqual(self.titles("design review"), ["Design review"])
+        self.assertEqual(self.titles("design dentist"), [])
+
+    def test_query_syntax_is_treated_as_plain_text(self):
+        """FTS5 would read these as operators; a user means them literally."""
+        for term in ("AND", "OR", "NOT", "*", "^", "(", ")", '"', ":", "-"):
+            with self.subTest(term=term):
+                self.assertEqual(self.titles(term), [],
+                                 f"“{term}” was read as query syntax")
+
+    def test_a_quote_does_not_break_the_query(self):
+        self.add("Sam's party")
+        self.assertEqual(self.titles('sam'), ["Sam's party"])
 
     def test_icalendar_boilerplate_does_not_match(self):
         """The bug: every event carries CALSCALE:GREGORIAN."""

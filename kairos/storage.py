@@ -9,9 +9,11 @@ ORM:
 
     accounts_meta   one row per calendar-source, for sync bookkeeping
     calendars       one row per calendar
-    events          one row per event, holding both the parsed summary fields
-                    (so range queries are fast) and the original iCalendar
-                    text (so nothing is lost)
+    events          one row per event, holding both the parsed fields (so
+                    range queries and search are fast) and the original
+                    iCalendar text (so nothing is lost)
+    events_fts      a full-text index over the three fields people search,
+                    kept in step with `events` by SQL triggers
 
 Every query in this file uses bound parameters.  There is no string
 interpolation of user or server data into SQL anywhere, and there should
@@ -21,6 +23,7 @@ never be.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import threading
 from datetime import datetime
@@ -33,6 +36,10 @@ from kairos.models import Calendar, Event
 log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
+
+#: Bumped when the full-text index's columns or tokeniser change, which
+#: makes the next start rebuild it.
+SEARCH_INDEX_VERSION = 1
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS calendars (
@@ -75,6 +82,39 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
+#: Full-text search over the three fields a person actually searches.
+#:
+#: This is an *external content* index: it stores no copy of the text, only
+#: the index, and reads the columns back out of ``events`` by rowid.  The
+#: triggers below are what keep the two in step — doing it in Python instead
+#: would mean remembering to update the index in every method that writes an
+#: event, and the one that got forgotten would silently stop being findable.
+SEARCH_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+    summary, location, description,
+    content='events',
+    content_rowid='rowid',
+    tokenize="unicode61 remove_diacritics 2"
+);
+
+CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts (rowid, summary, location, description)
+    VALUES (new.rowid, new.summary, new.location, new.description);
+END;
+
+CREATE TRIGGER IF NOT EXISTS events_fts_delete AFTER DELETE ON events BEGIN
+    INSERT INTO events_fts (events_fts, rowid, summary, location, description)
+    VALUES ('delete', old.rowid, old.summary, old.location, old.description);
+END;
+
+CREATE TRIGGER IF NOT EXISTS events_fts_update AFTER UPDATE ON events BEGIN
+    INSERT INTO events_fts (events_fts, rowid, summary, location, description)
+    VALUES ('delete', old.rowid, old.summary, old.location, old.description);
+    INSERT INTO events_fts (rowid, summary, location, description)
+    VALUES (new.rowid, new.summary, new.location, new.description);
+END;
+"""
+
 # Values for the `pending` column, named so the code reads like prose.
 PENDING_NONE = 0
 PENDING_SAVE = 1
@@ -85,6 +125,29 @@ def _timestamp(moment: datetime) -> float:
     return moment.timestamp()
 
 
+def _fts_query(text: str) -> str:
+    """Turn what the user typed into an FTS5 MATCH expression.
+
+    Everything typed is treated as literal words, never as query syntax: FTS5
+    reads bare ``AND``, ``NOT``, ``*``, ``^``, ``:`` and parentheses as
+    operators, so an innocent search for "R&D (draft)" would either match the
+    wrong thing or raise a syntax error out of the database. Each word is
+    wrapped in double quotes — the FTS5 escape, doubling any quote inside —
+    and given a trailing ``*`` so results appear while the word is still
+    being typed.
+
+    Returns "" when nothing searchable is left, which the caller reads as "no
+    results" rather than "match everything".
+    """
+    words = [word for word in re.split(r"\s+", text.strip()) if word]
+    terms = []
+    for word in words:
+        cleaned = word.replace('"', '""')
+        if cleaned:
+            terms.append(f'"{cleaned}"*')
+    return " ".join(terms)
+
+
 class Storage:
     """The database.  One instance per running application.
 
@@ -93,11 +156,6 @@ class Storage:
     connection is shared behind a lock, which is plenty for one desktop app
     and avoids every class of "which thread owns this connection" bug.
     """
-
-    #: How many candidate rows a search will parse before giving up. A term
-    #: that appears in the iCalendar boilerplate matches every row, so this is
-    #: what stops one vague search from parsing the whole calendar.
-    SCAN_LIMIT = 2000
 
     def __init__(self, path: Path | str = DATABASE_FILE) -> None:
         ensure_directories()
@@ -113,6 +171,14 @@ class Storage:
         self._connection.execute("PRAGMA foreign_keys=ON")
         with self._lock:
             self._connection.executescript(SCHEMA)
+            self._add_missing_columns()
+            # Order matters. The backfill runs *before* the triggers exist:
+            # an UPDATE with the triggers in place would ask the index to
+            # remove entries it never had, and FTS5 answers that with
+            # "database disk image is malformed".
+            self._backfill_search_columns()
+            self._connection.executescript(SEARCH_SCHEMA)
+            self._rebuild_search_index()
             self._connection.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -122,6 +188,78 @@ class Storage:
         # iCalendar is the expensive part of a redraw; this makes repeat views
         # of the same month essentially free.
         self._parse_cache: dict[tuple, Event] = {}
+
+    # ------------------------------------------------------------------
+    # Schema upgrades
+    # ------------------------------------------------------------------
+
+    def _add_missing_columns(self) -> None:
+        """Bring an older database up to date, in place.
+
+        ``location`` and ``description`` were once only inside the stored
+        iCalendar. Searching them meant parsing every candidate row, which is
+        why search had to be capped and truncated silently. They are columns
+        now so the full-text index can reach them.
+        """
+        present = {row["name"] for row in
+                   self._connection.execute("PRAGMA table_info(events)")}
+        for column in ("location", "description"):
+            if column not in present:
+                self._connection.execute(
+                    f"ALTER TABLE events ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+
+    def _backfill_search_columns(self) -> None:
+        """Fill in the new columns for events cached by an older version.
+
+        Runs once: afterwards there are no rows left to find. Parsing the
+        whole cache is the same work the old search did on a single vague
+        query, so even a large calendar pays it only this once.
+        """
+        rows = self._connection.execute(
+            "SELECT rowid, calendar_id, uid, ics FROM events"
+            " WHERE location = '' AND description = ''"
+        ).fetchall()
+        if not rows:
+            return
+
+        updates = []
+        for row in rows:
+            try:
+                events = ical.parse_calendar_text(row["ics"], row["calendar_id"])
+            except ical.ParseError:
+                continue
+            if not events:
+                continue
+            event = events[0]
+            if event.location or event.description:
+                updates.append((event.location, event.description, row["rowid"]))
+
+        if not updates:
+            return
+        log.info("indexing %d cached events for search", len(updates))
+        self._connection.executemany(
+            "UPDATE events SET location = ?, description = ? WHERE rowid = ?",
+            updates,
+        )
+
+    def _rebuild_search_index(self) -> None:
+        """Populate the index from the events, when it is not already.
+
+        A database written before the index existed has rows the index has
+        never seen, and an external-content FTS5 table cannot notice that by
+        itself — it would simply never find them. The version marker means
+        this costs one query per start rather than a full rebuild, and gives
+        a way to force one later if the indexed columns ever change.
+        """
+        row = self._connection.execute(
+            "SELECT value FROM meta WHERE key = 'search_index_version'").fetchone()
+        if row is not None and row["value"] == str(SEARCH_INDEX_VERSION):
+            return
+        self._connection.execute(
+            "INSERT INTO events_fts (events_fts) VALUES ('rebuild')")
+        self._connection.execute(
+            "INSERT OR REPLACE INTO meta (key, value)"
+            " VALUES ('search_index_version', ?)", (str(SEARCH_INDEX_VERSION),))
 
     def close(self) -> None:
         with self._lock:
@@ -212,22 +350,26 @@ class Storage:
             self._connection.execute(
                 """
                 INSERT INTO events (calendar_id, uid, href, etag, ics, summary,
+                                    location, description,
                                     start_utc, end_utc, all_day, recurring, pending)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(calendar_id, uid) DO UPDATE SET
-                    href      = excluded.href,
-                    etag      = excluded.etag,
-                    ics       = excluded.ics,
-                    summary   = excluded.summary,
-                    start_utc = excluded.start_utc,
-                    end_utc   = excluded.end_utc,
-                    all_day   = excluded.all_day,
-                    recurring = excluded.recurring,
-                    pending   = excluded.pending
+                    href        = excluded.href,
+                    etag        = excluded.etag,
+                    ics         = excluded.ics,
+                    summary     = excluded.summary,
+                    location    = excluded.location,
+                    description = excluded.description,
+                    start_utc   = excluded.start_utc,
+                    end_utc     = excluded.end_utc,
+                    all_day     = excluded.all_day,
+                    recurring   = excluded.recurring,
+                    pending     = excluded.pending
                 """,
                 (
                     event.calendar_id, event.uid, event.href, event.etag, ics,
-                    event.summary, _timestamp(event.start), _timestamp(event.end),
+                    event.summary, event.location, event.description,
+                    _timestamp(event.start), _timestamp(event.end),
                     int(event.all_day), int(event.is_recurring), pending,
                 ),
             )
@@ -241,7 +383,8 @@ class Storage:
             ics = event.raw_ics or ical.to_ical_text(event)
             rows.append((
                 event.calendar_id, event.uid, event.href, event.etag, ics,
-                event.summary, _timestamp(event.start), _timestamp(event.end),
+                event.summary, event.location, event.description,
+                _timestamp(event.start), _timestamp(event.end),
                 int(event.all_day), int(event.is_recurring), PENDING_NONE,
             ))
         if not rows:
@@ -250,18 +393,21 @@ class Storage:
             self._connection.executemany(
                 """
                 INSERT INTO events (calendar_id, uid, href, etag, ics, summary,
+                                    location, description,
                                     start_utc, end_utc, all_day, recurring, pending)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(calendar_id, uid) DO UPDATE SET
-                    href      = excluded.href,
-                    etag      = excluded.etag,
-                    ics       = excluded.ics,
-                    summary   = excluded.summary,
-                    start_utc = excluded.start_utc,
-                    end_utc   = excluded.end_utc,
-                    all_day   = excluded.all_day,
-                    recurring = excluded.recurring,
-                    pending   = excluded.pending
+                    href        = excluded.href,
+                    etag        = excluded.etag,
+                    ics         = excluded.ics,
+                    summary     = excluded.summary,
+                    location    = excluded.location,
+                    description = excluded.description,
+                    start_utc   = excluded.start_utc,
+                    end_utc     = excluded.end_utc,
+                    all_day     = excluded.all_day,
+                    recurring   = excluded.recurring,
+                    pending     = excluded.pending
                 """,
                 rows,
             )
@@ -367,51 +513,47 @@ class Storage:
         return [self._row_to_event(row) for row in rows]
 
     def search_events(self, text: str, calendar_ids: list[str], limit: int = 200) -> list[Event]:
-        """Events whose title, place or notes contain ``text``.
+        """Events whose title, place or notes match ``text``.
 
-        Two stages, and the second one matters. SQLite does the cheap part —
-        narrowing to rows whose stored iCalendar mentions the text at all —
-        and then each candidate is parsed and checked against the fields a
-        person actually meant.
+        Answered from the full-text index, so the database does all of it and
+        no event is parsed to find out whether it matched.
 
-        Without that second stage every event matches almost anything, because
-        the iCalendar boilerplate is searched too: every event carries
-        ``CALSCALE:GREGORIAN``, so searching for "re" once returned the entire
-        calendar.
+        This used to be a ``LIKE '%term%'`` over the stored iCalendar followed
+        by parsing each candidate to check the fields a person actually meant
+        — because the raw text matches almost anything, every event carrying
+        ``CALSCALE:GREGORIAN``. That could not use an index, and it gave up
+        after ``SCAN_LIMIT`` rows *without saying so*, quietly returning some
+        of the matches as though they were all of them.
 
-        ``SCAN_LIMIT`` bounds the work: a term that prefilters to thousands of
-        rows stops being examined once enough real matches are found.
+        Words match from the start rather than anywhere inside: "cin" finds
+        "Cinema", but "ine" no longer does. That is what an index can answer
+        quickly, and what people expect of a search box.
         """
-        text = text.strip()
-        if not text or not calendar_ids:
+        query = _fts_query(text)
+        if not query or not calendar_ids:
             return []
 
         placeholders = ",".join("?" for _ in calendar_ids)
-        # LIKE with an escaped pattern; % and _ from the user are literal.
-        pattern = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        query = f"""
-            SELECT * FROM events
-             WHERE calendar_id IN ({placeholders})
-               AND pending != ?
-               AND (summary LIKE ? ESCAPE '\\' OR ics LIKE ? ESCAPE '\\')
-             ORDER BY start_utc DESC
-             LIMIT ?
-        """
         with self._lock:
             rows = self._connection.execute(
-                query, [*calendar_ids, PENDING_DELETE, pattern, pattern, self.SCAN_LIMIT]
+                # The matches are gathered by a subquery rather than joined.
+                # Written as a join, SQLite drives the query from `events`
+                # using the calendar index and rescans the whole full-text
+                # table for every row — 80ms where this takes 1ms, and worse
+                # the larger the calendar. As a subquery the index is
+                # consulted exactly once.
+                f"""
+                SELECT * FROM events
+                 WHERE rowid IN (SELECT rowid FROM events_fts
+                                  WHERE events_fts MATCH ?)
+                   AND calendar_id IN ({placeholders})
+                   AND pending != ?
+                 ORDER BY start_utc DESC
+                 LIMIT ?
+                """,
+                [query, *calendar_ids, PENDING_DELETE, limit],
             ).fetchall()
-
-        needle = text.lower()
-        found: list[Event] = []
-        for row in rows:
-            event = self._row_to_event(row)
-            if any(needle in field.lower()
-                   for field in (event.summary, event.location, event.description)):
-                found.append(event)
-                if len(found) >= limit:
-                    break
-        return found
+        return [self._row_to_event(row) for row in rows]
 
     def count_events(self, calendar_id: str) -> int:
         with self._lock:

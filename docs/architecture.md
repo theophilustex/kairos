@@ -54,7 +54,7 @@ kairos/
   security.py       URL checks, password storage, safe writes
   models.py         the data types: Account, Calendar, Event, Alarm, Occurrence
   ical.py           the only module that knows what a VEVENT is
-  storage.py        the SQLite cache; the only module that writes SQL
+  storage.py        the SQLite cache and search index; the only SQL
   recurrence.py     repeat rules → concrete occurrences, in local time
   accounts.py       the account list (accounts.json)
   backends/
@@ -212,6 +212,23 @@ Each view is a `Gtk.Widget` that:
 ---
 
 ## Notes on some choices
+
+**Why is search a separate index rather than a query over the events?**
+Because the events are stored as iCalendar text, and the fields a person
+searches are buried in it. Matching the raw text matches everything — every
+event carries `CALSCALE:GREGORIAN` — so the old search parsed each candidate
+to check properly, could not use an index, and gave up after a fixed number
+of rows *without telling anyone*. `events_fts` is an FTS5 index over the
+summary, location and notes, maintained by SQL triggers rather than by
+Python: a write path that forgot to update it would make events silently
+unfindable, and there is no way to forget a trigger.
+
+Two things about it are worth keeping in mind. The matches are gathered in a
+**subquery**, not a join — written as a join, SQLite drives the query from
+`events` and rescans the entire index once per row, which measured 80ms
+against 1ms on five thousand events. And words match by **prefix**, which is
+what an index can answer quickly; matching the middle of a word would mean
+going back to reading every event.
 
 **Why no `.ui` files or GResource?** Building widgets in Python keeps the
 whole definition of a screen in one file, and removes a compile step from the

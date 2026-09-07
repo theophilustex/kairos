@@ -72,6 +72,12 @@ Search covers an event's **title, location and notes**. A repeating event is
 listed under its *next* occurrence rather than whenever the series began, and
 results still to come are listed before ones in the past.
 
+Words match from the **start**, so results narrow as you type: "cin" finds
+"Cinema". It does not match the middle of a word — "ine" will not find
+"Cinema" — because search is answered from an index rather than by reading
+every event, which is what keeps it instant on a calendar of any size. Typing
+several words finds events matching all of them.
+
 ---
 
 ## Views

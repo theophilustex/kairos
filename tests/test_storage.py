@@ -5,6 +5,7 @@ disconnected has to survive a later refresh from the server, or the user
 silently loses work.
 """
 
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -228,3 +229,132 @@ class Persistence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SearchIndex(StorageTestCase):
+    """The full-text index, and that it never drifts from the events.
+
+    Search is answered entirely from the index now, so an event the index
+    has forgotten is an event that cannot be found. The index is maintained
+    by SQL triggers rather than by Python precisely so that no write path can
+    forget it — these check the ones that would have been easy to miss.
+    """
+
+    def summaries(self, term):
+        return sorted(e.summary for e in self.storage.search_events(term, ["cal"]))
+
+    def test_a_new_event_is_findable(self):
+        self.storage.save_event(self.event("Dentist"))
+        self.assertEqual(self.summaries("dentist"), ["Dentist"])
+
+    def test_renaming_updates_the_index(self):
+        event = self.event("Dentist")
+        self.storage.save_event(event)
+        self.storage.save_event(event.copy(summary="Optician", raw_ics=""))
+        self.assertEqual(self.summaries("dentist"), [])
+        self.assertEqual(self.summaries("optician"), ["Optician"])
+
+    def test_changing_the_location_updates_the_index(self):
+        event = self.event("Meeting", location="Room 3")
+        self.storage.save_event(event)
+        self.storage.save_event(event.copy(location="Boardroom", raw_ics=""))
+        self.assertEqual(self.summaries("room"), [])
+        self.assertEqual(self.summaries("boardroom"), ["Meeting"])
+
+    def test_forgetting_an_event_removes_it_from_the_index(self):
+        event = self.event("Dentist")
+        self.storage.save_event(event)
+        self.storage.forget_event("cal", event.uid)
+        self.assertEqual(self.summaries("dentist"), [])
+
+    def test_an_event_queued_for_deletion_is_not_found(self):
+        event = self.event("Dentist")
+        self.storage.save_event(event)
+        self.storage.mark_event_deleted("cal", event.uid)
+        self.assertEqual(self.summaries("dentist"), [])
+
+    def test_a_full_refresh_keeps_the_index_correct(self):
+        """replace_calendar_events deletes in bulk, straight through SQL."""
+        gone = self.event("Old thing")
+        self.storage.save_event(gone)
+        self.storage.replace_calendar_events("cal", [self.event("New thing")])
+        self.assertEqual(self.summaries("old"), [])
+        self.assertEqual(self.summaries("new"), ["New thing"])
+
+    def test_the_notes_are_searchable(self):
+        self.storage.save_event(self.event("Review", description="bring the grid"))
+        self.assertEqual(self.summaries("grid"), ["Review"])
+
+    def test_icalendar_boilerplate_is_not_searchable(self):
+        """The index holds three fields, not the whole document."""
+        self.storage.save_event(self.event("Dentist"))
+        for term in ("gregorian", "vcalendar", "dtstart", "prodid", "kairos"):
+            with self.subTest(term=term):
+                self.assertEqual(self.summaries(term), [])
+
+    def test_results_are_not_silently_truncated(self):
+        """The old scan gave up after SCAN_LIMIT rows without saying so."""
+        for index in range(300):
+            self.storage.save_event(self.event(f"Standup {index}"))
+        self.assertEqual(len(self.storage.search_events("standup", ["cal"], limit=500)),
+                         300)
+
+    def test_another_calendar_is_not_searched(self):
+        self.storage.save_calendar(
+            Calendar(id="other", account_id="acct", name="Other", colour="#000000"))
+        event = self.event("Dentist")
+        event.calendar_id = "other"
+        self.storage.save_event(event)
+        self.assertEqual(self.summaries("dentist"), [])
+
+
+class SearchIndexMigration(unittest.TestCase):
+    """A cache written by a version with no location/description columns."""
+
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp(prefix="kairos-migrate-"))
+        self.path = self.directory / "cache.db"
+
+    def test_an_older_cache_is_upgraded_and_indexed(self):
+        from kairos import ical
+        from kairos.models import Event, local_timezone
+
+        # Build a database the old way: no location or description columns.
+        connection = sqlite3.connect(self.path)
+        connection.executescript("""
+            CREATE TABLE events (
+                calendar_id TEXT NOT NULL, uid TEXT NOT NULL, href TEXT,
+                etag TEXT, ics TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
+                start_utc REAL NOT NULL, end_utc REAL NOT NULL,
+                all_day INTEGER NOT NULL DEFAULT 0,
+                recurring INTEGER NOT NULL DEFAULT 0,
+                pending INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (calendar_id, uid));
+        """)
+        start = datetime.now(tz=local_timezone())
+        event = Event.new("cal", start, start + timedelta(hours=1), "Dentist")
+        event.location = "High Street"
+        event.description = "bring the referral"
+        connection.execute(
+            "INSERT INTO events (calendar_id, uid, ics, summary, start_utc,"
+            " end_utc, all_day, recurring, pending)"
+            " VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)",
+            ("cal", event.uid, ical.to_ical_text(event), event.summary,
+             start.timestamp(), (start + timedelta(hours=1)).timestamp()))
+        connection.commit()
+        connection.close()
+
+        storage = Storage(self.path)
+        try:
+            self.assertEqual(
+                [e.summary for e in storage.search_events("dentist", ["cal"])],
+                ["Dentist"])
+            self.assertEqual(
+                [e.summary for e in storage.search_events("high street", ["cal"])],
+                ["Dentist"],
+                "the location was not recovered from the stored iCalendar")
+            self.assertEqual(
+                [e.summary for e in storage.search_events("referral", ["cal"])],
+                ["Dentist"])
+        finally:
+            storage.close()
