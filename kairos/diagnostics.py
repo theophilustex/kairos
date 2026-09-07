@@ -35,14 +35,31 @@ def run(argv: list[str] | None = None) -> int:
 
     password = getpass.getpass("Password (not echoed, not stored): ")
 
+    from kairos.config import settings
+
+    # A plain-http server is exactly the case people need to diagnose, and
+    # Kairos refuses those by default. Relax it for the length of this run
+    # only: leaving a security setting turned on behind someone's back
+    # because they once ran a diagnostic would be indefensible.
+    was_allowed = settings.get_bool("allow_insecure_http")
+    relaxed = arguments.url.strip().lower().startswith("http://")
+    if relaxed and not was_allowed:
+        settings.set("allow_insecure_http", True)
+        print("(temporarily allowing plain http for this run)")
+    try:
+        return _walk(arguments, password)
+    finally:
+        if relaxed and not was_allowed:
+            settings.set("allow_insecure_http", was_allowed)
+
+
+def _walk(arguments, password: str) -> int:
+    """The actual questions, once the URL is allowed to be asked about."""
     import caldav
 
     from kairos import ical
     from kairos.backends.caldav_backend import CalDAVBackend
-    from kairos.config import settings
     from kairos.models import CALDAV, Account, local_timezone
-
-    settings.set("allow_insecure_http", True)   # this tool is for diagnosing
 
     account = Account(id="diagnose", name="Diagnostic", kind=CALDAV,
                       url=arguments.url, username=arguments.username,

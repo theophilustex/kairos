@@ -32,7 +32,7 @@ python3 -m unittest tests.test_ical -v      # one module
 python3 -m unittest tests.test_ical.AllDayEvents.test_written_as_dates_not_datetimes
 ```
 
-625 tests, all standard-library `unittest`. There is no framework to install
+629 tests, all standard-library `unittest`. There is no framework to install
 and no configuration file.
 
 | Module | |
@@ -55,6 +55,7 @@ and no configuration file.
 | `test_series_split.py` | "This and all following", including COUNT rules. |
 | `test_meeting_links.py` | Finding a link, and refusing to open anything unsafe. |
 | `test_delete_protection.py` | The switch that stops Kairos deleting anything. |
+| `test_diagnostics.py` | `--diagnose`, and that it puts settings back. |
 | `test_drag.py` | Dragging blocks to move and resize events. |
 | `test_keyboard.py` | Arrow-key navigation of the month grid. |
 | `test_gestures.py` | Swiping. |
