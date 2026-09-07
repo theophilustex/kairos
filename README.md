@@ -4,7 +4,7 @@
 
 # Kairos
 
-**A lightweight, customisable calendar for Linux.**
+**A lightweight, open source, customizable calendar for Linux.**
 
 [![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-663366?style=flat-square)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
