@@ -329,3 +329,25 @@
 .kairos-empty-state {
     color: alpha(currentColor, 0.5);
 }
+
+/* Where a dragged event will land.  An outline rather than a fill, so the
+   events it is passing over stay readable underneath it. */
+.kairos-drop-indicator {
+    border: 2px dashed alpha(currentColor, 0.75);
+    border-radius: 5px;
+    background-color: alpha(currentColor, 0.10);
+    margin: 1px;
+    min-height: 0;
+}
+
+.kairos-drop-indicator label {
+    font-size: 0.78em;
+    font-weight: bold;
+    opacity: 0.9;
+}
+
+/* The block being dragged stays where it was, dimmed, so it is obvious
+   which event the indicator belongs to. */
+.kairos-dragging {
+    opacity: 0.35;
+}

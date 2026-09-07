@@ -253,11 +253,25 @@ the handler runs, libdbusmenu discards the error, and the menu draws perfectly
 while doing nothing. `tests/test_background.py` therefore asserts on the
 *declaration*, not just the handler.
 
-**Dragging is row arithmetic too.** A drag moves a block by re-attaching it
-at different grid rows, which snaps to the quarter hour for free and needs no
-drawing code of its own. `dragged_times()` is the whole calculation and takes
-no widgets, so the awkward cases — dragging past midnight, shrinking an event
-to nothing — are tested without a pointer.
+**A drag must never move the widget being dragged.** `Gtk.GestureDrag`
+reports offsets from where the press landed *in the dragged widget's own
+coordinates*. Move that widget and the origin moves with it, so the offset
+collapses back towards zero — which is exactly what happened in the first
+version of this: an event could be shifted by one row and then no further,
+however far the pointer travelled. The block now stays put and dims, and a
+separate indicator shows the target.
+
+For the same reason the target *day* is worked out from where the pointer
+actually is — `compute_point()` into the columns box — rather than from how
+far it has travelled. Absolute beats accumulated whenever a widget under the
+pointer might move.
+
+`dragged_times()` is the whole calculation and takes no widgets, so the
+awkward cases — dragging past midnight, shrinking an event to nothing,
+dragging an all-day banner that has no time to change — are tested without a
+pointer. It works in minutes rather than rows, because a block is placed by
+rows *plus a margin* and so can start at any minute; that also fixed events
+at 9:05 being drawn at 9:00.
 
 **Why is the week grid made of rows rather than pixels?** Each day is a
 `Gtk.Grid` of fifteen-minute rows, and an event is attached spanning the rows

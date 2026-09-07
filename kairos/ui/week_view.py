@@ -20,7 +20,8 @@ from datetime import date, datetime, timedelta
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, GObject, Gtk  # noqa: E402
+gi.require_version("Graphene", "1.0")
+from gi.repository import GLib, GObject, Graphene, Gtk  # noqa: E402
 
 from kairos import formatting, recurrence
 from kairos.config import settings
@@ -53,10 +54,30 @@ TIME_LABEL_PIXELS = 36
 #: to hit without care.
 RESIZE_GRIP_PIXELS = 8
 
+#: ...but never more than this share of a block's height.  A quarter-hour
+#: meeting in a dense grid is only a dozen pixels tall, and a fixed grip
+#: would swallow the whole of it — leaving an event that could be resized
+#: but never moved.
+RESIZE_GRIP_SHARE = 1 / 3
 
-def dragged_times(occurrence: Occurrence, *, rows: int, days: int,
+#: How far the pointer must travel before a press counts as a drag rather
+#: than a click.
+DRAG_THRESHOLD_PIXELS = 4
+
+#: What a drag snaps to.  The grid draws fifteen-minute rows, but an event
+#: can start anywhere inside one (see :meth:`WeekView._fill_day`), so there
+#: is no reason to make people schedule on the quarter hour.
+DRAG_SNAP_MINUTES = 5
+
+#: The shortest an event can be dragged down to.
+MIN_EVENT_MINUTES = 5
+
+MINUTES_PER_DAY = 24 * 60
+
+
+def dragged_times(occurrence: Occurrence, *, minutes: int, days: int,
                   resizing: bool) -> tuple[datetime, datetime]:
-    """Where a drag of ``rows`` rows and ``days`` days leaves an event.
+    """Where a drag of ``minutes`` and ``days`` leaves an event.
 
     Pure arithmetic, kept out of the gesture handler so it can be tested
     without a pointer.  Two rules it enforces, both of which come from
@@ -64,23 +85,34 @@ def dragged_times(occurrence: Occurrence, *, rows: int, days: int,
 
     * an event cannot be dragged out of its day — the grid has nowhere to
       draw it, so it stops at midnight either end;
-    * a resize cannot make an event end before it starts, so the end stops
-      one row after the start.
+    * a resize cannot make an event end before it starts, so it stops at
+      :data:`MIN_EVENT_MINUTES`.
+
+    An all-day event has no time to change, only a day, so ``minutes`` is
+    ignored for one and its whole span moves together.
     """
-    start_row = row_for(occurrence.start, occurrence.start.date())
-    end_row = max(start_row + 1, row_for(occurrence.end, occurrence.start.date()))
+    day = occurrence.first_day
+    if occurrence.all_day:
+        shift = timedelta(days=days)
+        return occurrence.start + shift, occurrence.end + shift
+
+    start_minutes = occurrence.start.hour * 60 + occurrence.start.minute
+    length = max(MIN_EVENT_MINUTES,
+                 int((occurrence.end - occurrence.start).total_seconds() // 60))
 
     if resizing:
-        new_end = min(ROWS_PER_DAY, max(start_row + 1, end_row + rows))
-        new_start = start_row
+        new_start = start_minutes
+        new_end = min(MINUTES_PER_DAY,
+                      max(start_minutes + MIN_EVENT_MINUTES,
+                          start_minutes + length + minutes))
     else:
-        span = end_row - start_row
-        new_start = min(ROWS_PER_DAY - span, max(0, start_row + rows))
-        new_end = new_start + span
+        new_start = min(MINUTES_PER_DAY - length,
+                        max(0, start_minutes + minutes))
+        new_end = new_start + length
 
-    midnight = start_of_day(occurrence.start.date() + timedelta(days=days))
-    return (midnight + timedelta(minutes=new_start * MINUTES_PER_ROW),
-            midnight + timedelta(minutes=new_end * MINUTES_PER_ROW))
+    midnight = start_of_day(day + timedelta(days=days))
+    return (midnight + timedelta(minutes=new_start),
+            midnight + timedelta(minutes=new_end))
 
 
 def assign_columns(occurrences: list[Occurrence]) -> list[tuple[Occurrence, int, int]]:
@@ -160,7 +192,7 @@ class WeekView(Gtk.Box):
         self._first_day = date.today()
         self._day_grids: list[Gtk.Grid] = []
         self._drag: dict = {}
-        self._dragging_grid = None
+        self._indicator: Gtk.Widget | None = None
         self._calendar_cache = None
         self._now_line: Gtk.Widget | None = None
         self._scrolled_once = False
@@ -432,17 +464,43 @@ class WeekView(Gtk.Box):
         least_rows = max(1, -(-MIN_BLOCK_PIXELS // row_height))
 
         for occurrence, column, width in assign_columns(occurrences):
-            start_row = row_for(occurrence.start, day)
-            end_row = max(start_row + 1, row_for(occurrence.end, day))
-            span = max(end_row - start_row, least_rows)
-            span = min(span, ROWS_PER_DAY - start_row)
-
-            show_time = span * row_height >= TIME_LABEL_PIXELS
+            start_row, top, span, bottom = self._placement(occurrence, day,
+                                                           row_height, least_rows)
+            show_time = (span * row_height - top - bottom) >= TIME_LABEL_PIXELS
             block = self._make_block(occurrence, colours, show_time=show_time)
+            # A grid row is fifteen minutes, but an event need not begin on
+            # one: the margins place it exactly inside the rows it spans, so
+            # a 9:05 meeting is drawn at 9:05 rather than at 9:00.
+            block.set_margin_top(top)
+            block.set_margin_bottom(bottom)
             # The grid is MAX_OVERLAP_COLUMNS wide; an event that shares its
             # slot with nobody spans all of them.
             slot_width = max(1, MAX_OVERLAP_COLUMNS // width)
             grid.attach(block, column * slot_width, start_row, slot_width, span)
+
+    @staticmethod
+    def _placement(occurrence: Occurrence, day: date, row_height: int,
+                   least_rows: int) -> tuple[int, int, int, int]:
+        """``(first row, top margin, rows spanned, bottom margin)`` for a block.
+
+        The rows put the block roughly in place and the margins put it
+        exactly, which is what lets an event start and end at any minute on
+        a grid whose rows are quarter hours.
+        """
+        start_minutes = (occurrence.start.hour * 60 + occurrence.start.minute
+                         if occurrence.start.date() == day else 0)
+        end_minutes = (occurrence.end.hour * 60 + occurrence.end.minute
+                       if occurrence.end.date() == day else MINUTES_PER_DAY)
+        length = max(1, end_minutes - start_minutes)
+
+        start_row = start_minutes // MINUTES_PER_ROW
+        top = round((start_minutes % MINUTES_PER_ROW) / MINUTES_PER_ROW * row_height)
+        height = max(MIN_BLOCK_PIXELS, round(length / MINUTES_PER_ROW * row_height))
+
+        span = max(least_rows, -(-(top + height) // max(1, row_height)))
+        span = max(1, min(span, ROWS_PER_DAY - start_row))
+        bottom = max(0, span * row_height - top - height)
+        return start_row, top, span, bottom
 
     def _make_block(self, occurrence: Occurrence, colours: dict, *, show_time: bool = True) -> Gtk.Widget:
         colour = colours.get(occurrence.calendar_id, "#3584e4")
@@ -475,9 +533,20 @@ class WeekView(Gtk.Box):
     # ------------------------------------------------------------------
     # Dragging a block to move or resize it
     # ------------------------------------------------------------------
+    #
+    # The dragged widget is deliberately *not* moved while the drag is in
+    # progress.  Gtk.GestureDrag reports offsets from where the press landed
+    # in the dragged widget's own coordinates, so moving that widget moves
+    # the origin with it and the offset collapses back towards zero — which
+    # is why an earlier version could shift an event by one row and then no
+    # further, however far the pointer went.
+    #
+    # Instead the block stays put and dims, and a separate indicator shows
+    # where it will land.
 
-    def _make_draggable(self, block: Gtk.Widget, occurrence: Occurrence) -> None:
-        """Let a block be dragged to a new time, or its end pulled about.
+    def _make_draggable(self, widget: Gtk.Widget, occurrence: Occurrence, *,
+                        all_day: bool = False) -> None:
+        """Let a block or banner be dragged to a new time or day.
 
         Read-only calendars are left alone: offering a drag that silently
         does nothing is worse than not offering one.
@@ -487,91 +556,156 @@ class WeekView(Gtk.Box):
             return
 
         drag = Gtk.GestureDrag()
-        drag.connect("drag-begin", self._on_drag_begin, block, occurrence)
-        drag.connect("drag-update", self._on_drag_update, block, occurrence)
-        drag.connect("drag-end", self._on_drag_end, block, occurrence)
-        block.add_controller(drag)
+        drag.connect("drag-begin", self._on_drag_begin, widget, occurrence, all_day)
+        drag.connect("drag-update", self._on_drag_update, widget, occurrence, all_day)
+        drag.connect("drag-end", self._on_drag_end, widget, occurrence, all_day)
+        widget.add_controller(drag)
 
     def _calendars_by_id(self) -> dict:
         if getattr(self, "_calendar_cache", None) is None:
             self._calendar_cache = {c.id: c for c in self.sync.calendars()}
         return self._calendar_cache
 
-    def _on_drag_begin(self, _gesture, _x, start_y, block, occurrence) -> None:
-        height = block.get_allocated_height()
+    # -- the gesture ---------------------------------------------------
+
+    def _on_drag_begin(self, _gesture, start_x, start_y, widget, occurrence,
+                       all_day=False) -> None:
+        height = widget.get_allocated_height()
         self._drag = {
             # A press near the bottom edge means "change when this ends";
-            # anywhere else means "move the whole thing". A block whose
+            # anywhere else means "move the whole thing".  A block whose
             # height is not known yet is treated as a move: that is the
-            # commoner action, and resizing something by an unknown amount
-            # is the worse thing to guess at.
-            "resizing": height > 0 and height - start_y <= RESIZE_GRIP_PIXELS,
-            "rows": 0,
+            # commoner action, and resizing by an unknown amount is the
+            # worse thing to guess at.  An all-day banner has no end to
+            # drag, only a day.
+            "resizing": (not all_day and height > 0
+                         and height - start_y <= min(RESIZE_GRIP_PIXELS,
+                                                     height * RESIZE_GRIP_SHARE)),
+            "all_day": all_day,
+            "start": (start_x, start_y),
+            "minutes": 0,
             "days": 0,
             "moved": False,
         }
+        widget.add_css_class("kairos-dragging")
 
-    def _on_drag_update(self, gesture, offset_x, offset_y, block, occurrence) -> None:
+    def _on_drag_update(self, _gesture, offset_x, offset_y, widget, occurrence,
+                        all_day=False) -> None:
         if not self._drag:
             return
-        row_height = max(1, self._row_height())
-        rows = round(offset_y / row_height)
-        days = self._day_offset(gesture, offset_x)
 
-        if abs(offset_y) > 3 or days:
+        if abs(offset_x) > DRAG_THRESHOLD_PIXELS or abs(offset_y) > DRAG_THRESHOLD_PIXELS:
             self._drag["moved"] = True
-        if rows == self._drag["rows"] and days == self._drag["days"]:
+
+        minutes = 0 if all_day else self._snapped_minutes(offset_y)
+        days = 0 if self._drag["resizing"] else self._target_day(
+            widget, occurrence, offset_x, offset_y, all_day)
+
+        if (minutes, days) == (self._drag["minutes"], self._drag["days"]):
             return
-        self._drag["rows"], self._drag["days"] = rows, days
-        self._preview(block, occurrence)
+        self._drag["minutes"], self._drag["days"] = minutes, days
+        if self._drag["moved"]:
+            self._show_indicator(occurrence)
 
-    def _day_offset(self, gesture, offset_x: float) -> int:
-        """How many day columns the pointer has travelled."""
-        if not self._day_grids:
-            return 0
-        width = self._day_grids[0].get_allocated_width()
-        if width <= 0:
-            return 0
-        moved = round(offset_x / width)
-        index = self._day_grids.index(self._dragging_grid) if self._dragging_grid else 0
-        # Clamp to the week on screen: there is no column to land on outside it.
-        return max(-index, min(moved, len(self._day_grids) - 1 - index))
-
-    def _preview(self, block, occurrence) -> None:
-        """Re-attach the block where the drag currently points.
-
-        The grid is doing the layout, so moving a block really is a matter of
-        attaching it at different rows — which snaps to the quarter hour for
-        free and needs no separate drawing code.
-        """
-        grid = block.get_parent()
-        if not isinstance(grid, Gtk.Grid):
-            return
-        self._dragging_grid = grid
-        column, _row, width, _height = grid.query_child(block)
-        start, end = dragged_times(occurrence, rows=self._drag["rows"], days=0,
-                                   resizing=self._drag["resizing"])
-        day = occurrence.start.date()
-        start_row = row_for(start, day)
-        span = max(1, row_for(end, day) - start_row)
-        grid.remove(block)
-        grid.attach(block, column, start_row, width, min(span, ROWS_PER_DAY - start_row))
-
-    def _on_drag_end(self, gesture, offset_x, offset_y, block, occurrence) -> None:
+    def _on_drag_end(self, _gesture, _offset_x, _offset_y, widget, occurrence,
+                     all_day=False) -> None:
         state, self._drag = self._drag, {}
-        self._dragging_grid = None
+        widget.remove_css_class("kairos-dragging")
+        self._clear_indicator()
         if not state or not state.get("moved"):
             # A press that never really moved is a click, and the button's
             # own "clicked" handler will open the event.
             return
 
-        start, end = dragged_times(occurrence, rows=state["rows"],
+        start, end = dragged_times(occurrence, minutes=state["minutes"],
                                    days=state["days"],
                                    resizing=state["resizing"])
         if (start, end) == (occurrence.start, occurrence.end):
-            self.refresh()
             return
         self.emit("event-moved", occurrence, start, end)
+
+    # -- where the pointer is ------------------------------------------
+
+    def _snapped_minutes(self, offset_y: float) -> int:
+        """How far the drag has moved in time, snapped to the grid's step."""
+        row_height = max(1, self._row_height())
+        minutes = offset_y / row_height * MINUTES_PER_ROW
+        return int(round(minutes / DRAG_SNAP_MINUTES) * DRAG_SNAP_MINUTES)
+
+    def _target_day(self, widget, occurrence, offset_x, offset_y,
+                    all_day: bool) -> int:
+        """How many days sideways the pointer now is, from the event's own day.
+
+        Worked out from where the pointer actually *is* rather than from how
+        far it has travelled, so it cannot drift out of step with the columns
+        it is being dragged over.
+        """
+        container = self._all_day_days if all_day else self._columns_box
+        if container is None or self.day_count <= 0:
+            return 0
+        width = container.get_allocated_width()
+        if width <= 0:
+            return 0
+
+        start_x, start_y = self._drag["start"]
+        point = Graphene.Point()
+        point.init(start_x + offset_x, start_y + offset_y)
+        found, here = widget.compute_point(container, point)
+        if not found:
+            return 0
+
+        column_width = width / self.day_count
+        column = int(max(0, min(self.day_count - 1, here.x // column_width)))
+        origin = (occurrence.first_day - self._first_day).days
+        return column - origin
+
+    # -- showing where it will land ------------------------------------
+
+    def _clear_indicator(self) -> None:
+        if self._indicator is not None and self._indicator.get_parent() is not None:
+            self._indicator.get_parent().remove(self._indicator)
+        self._indicator = None
+
+    def _show_indicator(self, occurrence: Occurrence) -> None:
+        """Draw an outline where the event would end up.
+
+        Without this the only feedback was the block itself moving, which it
+        no longer does — and which never showed the *day* it would land on.
+        """
+        self._clear_indicator()
+        start, end = dragged_times(occurrence, minutes=self._drag["minutes"],
+                                   days=self._drag["days"],
+                                   resizing=self._drag["resizing"])
+        column = (start.date() - self._first_day).days
+        if not 0 <= column < len(self._day_grids):
+            return
+
+        # The time is what a drop needs to tell you; the column already
+        # says which day, so the weekday is added only when the drag has
+        # actually left the day it started in.
+        when = formatting.format_time(start)
+        if self._drag["days"]:
+            when = f"{formatting.DAY_ABBREVIATIONS[start.weekday()]} {when}"
+        label = Gtk.Label(label=when, xalign=0.5)
+        label.set_ellipsize(3)
+        label.set_hexpand(True)
+        label.set_valign(Gtk.Align.CENTER)
+        indicator = Gtk.Box()
+        indicator.append(label)
+        indicator.add_css_class("kairos-drop-indicator")
+
+        if self._drag["all_day"]:
+            label.set_label(formatting.format_date_short(start.date()))
+
+            self._all_day_days.attach(indicator, column, 0, 1, 1)
+        else:
+            grid = self._day_grids[column]
+            day = start.date()
+            first_row = row_for(start, day)
+            span = max(1, min(ROWS_PER_DAY - first_row,
+                              row_for(end, day) - first_row))
+            grid.attach(indicator, 0, first_row, MAX_OVERLAP_COLUMNS, span)
+        self._indicator = indicator
 
     def _make_chip(self, occurrence: Occurrence, colours: dict, css_class: str) -> Gtk.Widget:
         colour = colours.get(occurrence.calendar_id, "#3584e4")
@@ -583,6 +717,9 @@ class WeekView(Gtk.Box):
         style_widget(button, tinted_button_css(colour))
         button.connect("clicked", lambda b: self.emit("event-activated", occurrence, b))
         mark_event_widget(button, occurrence)
+        # All-day banners drag sideways between days; there is no time on
+        # them to change.
+        self._make_draggable(button, occurrence, all_day=True)
         return button
 
     # ------------------------------------------------------------------

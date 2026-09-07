@@ -101,10 +101,18 @@ and keeps the same line all the way along; a bar reaching past the edge of the
 week is cut off at it. Where bars overlap they stack, longest at the top.
 
 **Drag a block** to move an event, or pull its bottom edge to change when it
-ends. Everything snaps to the quarter hour, and dragging sideways moves the
-event to another day. An event cannot be dragged out of its day or shortened
+ends. Drag sideways to put it on another day, and up or down to change the
+time — as far as you like, in five-minute steps. An all-day banner can be
+dragged between days too.
+
+While you drag, the event you picked up dims and a dashed outline shows
+where it will land, labelled with the time it would start — and the weekday
+as well, once you have dragged it out of the day it began in. Nothing is
+saved until you let go.
+
+An event cannot be dragged out of the day it would land on, or shortened
 past its own start. Dragging one occurrence of a repeating event asks which
-occurrences you meant, exactly as the editor does.
+occurrences you meant, exactly as the editor does; cancelling puts it back.
 
 <img src="images/week-view.png" alt="The week view: a timed grid with overlapping events side by side and all-day events in a strip above">
 
