@@ -27,7 +27,7 @@ from kairos.ical import REPEAT_PRESETS
 from kairos.models import (
     Alarm, Calendar, Event, describe_offset, local_timezone, to_local,
 )
-from kairos.ui.widgets import DateTimeRow, colour_swatch
+from kairos.ui.widgets import DateTimeRow, colour_swatch, describe
 
 
 class EventEditor(Adw.Dialog):
@@ -265,7 +265,7 @@ class EventEditor(Adw.Dialog):
         remove = Gtk.Button(icon_name="user-trash-symbolic")
         remove.add_css_class("flat")
         remove.set_valign(Gtk.Align.CENTER)
-        remove.set_tooltip_text("Remove this reminder")
+        describe(remove, "Remove this reminder")
         remove.connect("clicked", lambda *_: self._remove_alarm(row))
         row.add_suffix(remove)
 

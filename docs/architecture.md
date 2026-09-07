@@ -193,6 +193,7 @@ the UI.
 | A repeat option | One tuple in `REPEAT_PRESETS` in `ical.py`. |
 | A reminder preset | One tuple in `Alarm.PRESETS` in `models.py`. |
 | A keyboard shortcut | One line in `SHORTCUTS` in `app.py`. |
+| An icon-only button | Wrap it in `describe()` from `ui/widgets.py`, or `test_accessibility.py` fails. |
 | A tray menu entry | One `MenuItem` in `_start_tray()` in `app.py`. |
 | Another protocol | A class implementing `backends/base.py`, and a case in `backend_for()`. |
 

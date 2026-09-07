@@ -40,7 +40,8 @@ from kairos.ui.search_view import SearchView
 from kairos.ui.week_view import DayView, WeekView
 from kairos.ui.upcoming import UpcomingList
 from kairos.ui.widgets import (
-    SidebarSection, add_horizontal_swipe, colour_swatch, find_event_widget,
+    SidebarSection, add_horizontal_swipe, colour_swatch, describe,
+    find_event_widget,
 )
 
 log = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         header.set_title_widget(Gtk.Label(label=APP_NAME))
 
         manage = Gtk.Button(icon_name="view-list-bullet-symbolic")
-        manage.set_tooltip_text("Manage calendars")
+        describe(manage, "Manage calendars")
         manage.connect("clicked", lambda *_: self.open_calendar_manager())
         header.pack_end(manage)
 
@@ -174,6 +175,9 @@ class CalendarWindow(Adw.ApplicationWindow):
 
             check = Gtk.CheckButton()
             check.set_active(calendar.visible)
+            # The row's name is a plain label beside the checkbox, so the
+            # checkbox itself would be announced as just "check box".
+            describe(check, f"Show {calendar.name}", tooltip=False)
             check.connect("toggled", self._on_calendar_toggled, calendar)
             box.append(check)
 
@@ -259,7 +263,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         header = Adw.HeaderBar()
 
         new_button = Gtk.Button(icon_name="list-add-symbolic")
-        new_button.set_tooltip_text("New event (Ctrl+N)")
+        describe(new_button, "New event (Ctrl+N)")
         new_button.connect("clicked", lambda *_: self.new_event())
         header.pack_start(new_button)
 
@@ -267,7 +271,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         navigation.add_css_class("linked")
 
         previous = Gtk.Button(icon_name="go-previous-symbolic")
-        previous.set_tooltip_text("Previous")
+        describe(previous, "Previous")
         previous.connect("clicked", lambda *_: self._navigate(-1))
         navigation.append(previous)
 
@@ -277,14 +281,14 @@ class CalendarWindow(Adw.ApplicationWindow):
         navigation.append(today)
 
         following = Gtk.Button(icon_name="go-next-symbolic")
-        following.set_tooltip_text("Next")
+        describe(following, "Next")
         following.connect("clicked", lambda *_: self._navigate(1))
         navigation.append(following)
 
         header.pack_start(navigation)
 
         self._search_button = Gtk.ToggleButton(icon_name="system-search-symbolic")
-        self._search_button.set_tooltip_text("Search events (Ctrl+F)")
+        describe(self._search_button, "Search events (Ctrl+F)")
         self._search_button.connect("toggled", self._on_search_toggled)
         header.pack_end(self._search_button)
 
@@ -307,7 +311,7 @@ class CalendarWindow(Adw.ApplicationWindow):
 
         self._view_dropdown = Gtk.MenuButton()
         self._view_dropdown.set_visible(False)
-        self._view_dropdown.set_tooltip_text("Change view")
+        describe(self._view_dropdown, "Change view")
         view_menu = Gio.Menu()
         for key, label, _factory in self.VIEWS:
             view_menu.append(label, f"win.view-{key}")
@@ -318,11 +322,11 @@ class CalendarWindow(Adw.ApplicationWindow):
         header.pack_end(self._view_switcher)
 
         self._sync_spinner = Gtk.Spinner()
-        self._sync_spinner.set_tooltip_text("Syncing…")
+        describe(self._sync_spinner, "Syncing…")
         header.pack_end(self._sync_spinner)
 
         sync_button = Gtk.Button(icon_name="view-refresh-symbolic")
-        sync_button.set_tooltip_text("Sync now (Ctrl+R)")
+        describe(sync_button, "Sync now (Ctrl+R)")
         sync_button.connect("clicked", lambda *_: self.sync.sync_now())
         header.pack_end(sync_button)
 
@@ -330,7 +334,7 @@ class CalendarWindow(Adw.ApplicationWindow):
 
     def _build_menu_button(self) -> Gtk.MenuButton:
         button = Gtk.MenuButton(icon_name="open-menu-symbolic")
-        button.set_tooltip_text("Main menu")
+        describe(button, "Main menu")
 
         menu = Gio.Menu()
         section = Gio.Menu()

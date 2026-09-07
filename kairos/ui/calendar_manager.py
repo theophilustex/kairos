@@ -16,7 +16,7 @@ from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
 from kairos.models import Calendar
 from kairos.theming import parse_colour
 from kairos.ui.account_dialog import AccountDialog
-from kairos.ui.widgets import colour_swatch
+from kairos.ui.widgets import colour_swatch, describe
 
 
 class CalendarManager(Adw.Dialog):
@@ -41,7 +41,7 @@ class CalendarManager(Adw.Dialog):
         header = Adw.HeaderBar()
 
         add_button = Gtk.MenuButton(icon_name="list-add-symbolic")
-        add_button.set_tooltip_text("Add a calendar")
+        describe(add_button, "Add a calendar")
         menu = Gtk.PopoverMenu()
         menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         menu_box.set_margin_top(6)
@@ -108,13 +108,13 @@ class CalendarManager(Adw.Dialog):
 
         edit = Gtk.Button(icon_name="document-edit-symbolic")
         edit.add_css_class("flat")
-        edit.set_tooltip_text("Edit this account")
+        describe(edit, "Edit this account")
         edit.connect("clicked", lambda *_: self._edit_account(account))
         box.append(edit)
 
         remove = Gtk.Button(icon_name="user-trash-symbolic")
         remove.add_css_class("flat")
-        remove.set_tooltip_text("Remove this account")
+        describe(remove, "Remove this account")
         remove.connect("clicked", lambda *_: self._confirm_remove_account(account))
         box.append(remove)
 
@@ -134,21 +134,21 @@ class CalendarManager(Adw.Dialog):
         colour_button.set_dialog(Gtk.ColorDialog())
         colour_button.set_rgba(parse_colour(calendar.colour))
         colour_button.set_valign(Gtk.Align.CENTER)
-        colour_button.set_tooltip_text("Change this calendar's colour")
+        describe(colour_button, "Change this calendar's colour")
         colour_button.connect("notify::rgba", self._on_colour_changed, calendar)
         row.add_suffix(colour_button)
 
         visible = Gtk.Switch()
         visible.set_active(calendar.visible)
         visible.set_valign(Gtk.Align.CENTER)
-        visible.set_tooltip_text("Show this calendar")
+        describe(visible, "Show this calendar")
         visible.connect("state-set", self._on_visible_changed, calendar)
         row.add_suffix(visible)
 
         rename = Gtk.Button(icon_name="document-edit-symbolic")
         rename.add_css_class("flat")
         rename.set_valign(Gtk.Align.CENTER)
-        rename.set_tooltip_text("Rename")
+        describe(rename, "Rename")
         rename.connect("clicked", lambda *_: self._rename(calendar))
         row.add_suffix(rename)
 
@@ -156,7 +156,7 @@ class CalendarManager(Adw.Dialog):
             delete = Gtk.Button(icon_name="user-trash-symbolic")
             delete.add_css_class("flat")
             delete.set_valign(Gtk.Align.CENTER)
-            delete.set_tooltip_text("Delete this calendar and its events")
+            describe(delete, "Delete this calendar and its events")
             delete.connect("clicked", lambda *_: self._confirm_remove_calendar(calendar))
             row.add_suffix(delete)
 

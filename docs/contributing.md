@@ -32,7 +32,7 @@ python3 -m unittest tests.test_ical -v      # one module
 python3 -m unittest tests.test_ical.AllDayEvents.test_written_as_dates_not_datetimes
 ```
 
-410 tests, all standard-library `unittest`. There is no framework to install
+417 tests, all standard-library `unittest`. There is no framework to install
 and no configuration file.
 
 | Module | |
@@ -50,6 +50,7 @@ and no configuration file.
 | `test_layout.py` | Overlap packing, all-day banner spans, date formatting. |
 | `test_search_activation.py` | Opening an event from the search results. |
 | `test_sidebar_search.py` | The foldable sidebar, "Up next", and searching. |
+| `test_accessibility.py` | That every control Kairos builds has a name. |
 | `test_gestures.py` | Swiping. |
 
 `tests/__init__.py` redirects the XDG directories into a temporary sandbox and

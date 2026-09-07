@@ -487,6 +487,29 @@ def assign_banner_rows(
     return placed
 
 
+def describe(widget: Gtk.Widget, label: str, *, tooltip: bool = True) -> Gtk.Widget:
+    """Give a widget a name a screen reader can announce.
+
+    A button showing only an icon has no text, so assistive technology has
+    nothing to read out — it is announced as an unlabelled button, which
+    makes the header bar unusable without sight. A tooltip is not a
+    substitute: it maps to the accessible *description*, the extra detail
+    read after the name, and there is no name here to read first.
+
+    Returns the widget, so it can be wrapped around a constructor.
+
+    The name is also kept on the widget as ``kairos_accessible_label``. GTK
+    can set an accessible property but has no public way to read one back,
+    so without this the tests could not check that anything had been
+    labelled at all.
+    """
+    widget.update_property([Gtk.AccessibleProperty.LABEL], [label])
+    widget.kairos_accessible_label = label
+    if tooltip:
+        widget.set_tooltip_text(label)
+    return widget
+
+
 def mark_event_widget(widget: Gtk.Widget, occurrence) -> None:
     """Record which occurrence a chip stands for.
 
