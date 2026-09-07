@@ -37,11 +37,10 @@ from kairos.ui.event_popover import EventPopover, ask_edit_scope, confirm_delete
 from kairos.ui.month_view import MonthView
 from kairos.ui.preferences import PreferencesDialog
 from kairos.ui.search_view import SearchView
+from kairos.ui.sidebar import Sidebar
 from kairos.ui.week_view import DayView, WeekView
-from kairos.ui.upcoming import UpcomingList
 from kairos.ui.widgets import (
-    SidebarSection, add_horizontal_swipe, colour_swatch, describe,
-    find_event_widget,
+    add_horizontal_swipe, describe, find_event_widget,
 )
 
 log = logging.getLogger(__name__)
@@ -80,7 +79,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         self.show_view(settings.get("default_view"))
         # Fill the sidebar now rather than waiting for the first sync to say
         # something changed; with only local calendars that might never come.
-        self._rebuild_calendar_list()
+        self._sidebar.rebuild_calendar_list()
 
     # ------------------------------------------------------------------
     # Construction
@@ -88,7 +87,12 @@ class CalendarWindow(Adw.ApplicationWindow):
 
     def _build(self) -> None:
         self._split = Adw.NavigationSplitView()
-        self._split.set_sidebar(self._build_sidebar())
+        self._sidebar = Sidebar(self.sync)
+        self._sidebar.connect("date-selected", self._on_sidebar_date)
+        self._sidebar.connect("event-activated", self._on_event_activated)
+        self._sidebar.connect("manage-requested",
+                              lambda *_: self.open_calendar_manager())
+        self._split.set_sidebar(self._sidebar)
         self._split.set_content(self._build_content())
         self._split.set_min_sidebar_width(220)
         self._split.set_max_sidebar_width(300)
@@ -109,97 +113,6 @@ class CalendarWindow(Adw.ApplicationWindow):
         self.set_content(self._split)
 
     # -- sidebar ----------------------------------------------------------
-
-    def _build_sidebar(self) -> Adw.NavigationPage:
-        toolbar = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        header.set_title_widget(Gtk.Label(label=APP_NAME))
-
-        manage = Gtk.Button(icon_name="view-list-bullet-symbolic")
-        describe(manage, "Manage calendars")
-        manage.connect("clicked", lambda *_: self.open_calendar_manager())
-        header.pack_end(manage)
-
-        toolbar.add_top_bar(header)
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-
-        self._mini_calendar = Gtk.Calendar()
-        self._mini_calendar.add_css_class("kairos-mini-calendar")
-        self._mini_calendar.connect("day-selected", self._on_mini_calendar_selected)
-        box.append(self._mini_calendar)
-
-        # -- what is coming up --------------------------------------------
-        self._upcoming = UpcomingList(self.sync)
-        self._upcoming.connect("event-activated", self._on_event_activated)
-        self._upcoming_section = SidebarSection(
-            "Up next", self._upcoming,
-            settings_key="sidebar_upcoming_expanded",
-        )
-        self._upcoming_section.set_visible(settings.get_bool("sidebar_show_upcoming"))
-        box.append(self._upcoming_section)
-
-        # -- the calendars -------------------------------------------------
-        self._calendar_list = Gtk.ListBox()
-        self._calendar_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        self._calendar_list.add_css_class("navigation-sidebar")
-        box.append(SidebarSection(
-            "Calendars", self._calendar_list,
-            settings_key="sidebar_calendars_expanded",
-        ))
-
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_vexpand(True)
-        scroller.set_child(box)
-        toolbar.set_content(scroller)
-
-        return Adw.NavigationPage.new(toolbar, APP_NAME)
-
-    def _rebuild_calendar_list(self) -> None:
-        child = self._calendar_list.get_first_child()
-        while child is not None:
-            next_child = child.get_next_sibling()
-            self._calendar_list.remove(child)
-            child = next_child
-
-        for calendar in self.sync.calendars():
-            row = Gtk.ListBoxRow()
-            row.set_activatable(False)
-
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            box.set_margin_top(4)
-            box.set_margin_bottom(4)
-            box.set_margin_start(8)
-            box.set_margin_end(8)
-
-            check = Gtk.CheckButton()
-            check.set_active(calendar.visible)
-            # The row's name is a plain label beside the checkbox, so the
-            # checkbox itself would be announced as just "check box".
-            describe(check, f"Show {calendar.name}", tooltip=False)
-            check.connect("toggled", self._on_calendar_toggled, calendar)
-            box.append(check)
-
-            box.append(colour_swatch(calendar.colour, size=10))
-
-            label = Gtk.Label(label=calendar.name, xalign=0)
-            label.set_ellipsize(3)
-            label.set_hexpand(True)
-            label.set_tooltip_text(calendar.name)
-            box.append(label)
-
-            row.set_child(box)
-            self._calendar_list.append(row)
-
-    def _on_calendar_toggled(self, check: Gtk.CheckButton, calendar) -> None:
-        self.sync.set_calendar_visible(calendar, check.get_active())
-
-    def _on_mini_calendar_selected(self, calendar: Gtk.Calendar) -> None:
-        chosen = calendar.get_date()
-        day = date(chosen.get_year(), chosen.get_month(), chosen.get_day_of_month())
-        if day != self._current_day:
-            self.go_to_day(day)
 
     # -- content ----------------------------------------------------------
 
@@ -357,7 +270,8 @@ class CalendarWindow(Adw.ApplicationWindow):
 
     def _connect_signals(self) -> None:
         self.sync.connect("events-changed", lambda *_: self.refresh())
-        self.sync.connect("calendars-changed", lambda *_: self._rebuild_calendar_list())
+        self.sync.connect("calendars-changed",
+                          lambda *_: self._sidebar.rebuild_calendar_list())
         self.sync.connect("sync-started", lambda *_: self._set_syncing(True))
         self.sync.connect("sync-finished", self._on_sync_finished)
         settings.connect(self._on_settings_changed)
@@ -391,7 +305,7 @@ class CalendarWindow(Adw.ApplicationWindow):
             "sidebar_upcoming_count", "sidebar_upcoming_days",
         }
         if key in (None, "sidebar_show_upcoming"):
-            self._upcoming_section.set_visible(settings.get_bool("sidebar_show_upcoming"))
+            self._sidebar.refresh()
         if key is None or key in layout_keys:
             self.refresh()
 
@@ -433,28 +347,27 @@ class CalendarWindow(Adw.ApplicationWindow):
         view = self.current_view
         view.go_next() if direction > 0 else view.go_previous()
         self._current_day = view.selected_day
-        self._sync_mini_calendar()
+        self._sidebar.select_day(self._current_day)
         self._update_title()
 
     def go_to_day(self, day: date) -> None:
         self._close_popover()
         self._current_day = day
         self.current_view.set_date(day)
-        self._sync_mini_calendar()
+        self._sidebar.select_day(self._current_day)
         self._update_title()
 
     def _on_date_selected(self, _view, day: date) -> None:
         self._current_day = day
-        self._sync_mini_calendar()
+        self._sidebar.select_day(self._current_day)
 
     def _on_day_activated(self, _view, day: date) -> None:
         self._current_day = day
         self.show_view("day")
 
-    def _sync_mini_calendar(self) -> None:
-        self._mini_calendar.select_day(GLib.DateTime.new_local(
-            self._current_day.year, self._current_day.month, self._current_day.day, 12, 0, 0
-        ))
+    def _on_sidebar_date(self, _sidebar, day: date) -> None:
+        if day != self._current_day:
+            self.go_to_day(day)
 
     def _update_title(self) -> None:
         self._title_label.set_label(self.current_view.heading)
@@ -465,8 +378,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         # would be left pointing at a widget that no longer exists.
         self._close_popover()
         self.current_view.refresh()
-        self._rebuild_calendar_list()
-        self._upcoming.refresh()
+        self._sidebar.refresh()
         self._update_title()
 
     # ------------------------------------------------------------------

@@ -305,3 +305,66 @@ class SearchResults(WithCalendars):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheSidebarComponent(WithCalendars):
+    """The sidebar as its own widget, talking to the window by signal."""
+
+    def sidebar(self):
+        from kairos.ui.sidebar import Sidebar
+        return Sidebar(self.manager)
+
+    def test_it_lists_the_calendars(self):
+        from gi.repository import Gtk as _Gtk
+        bar = self.sidebar()
+        names = [w.get_label() for w in _walk(bar)
+                 if isinstance(w, _Gtk.Label) and w.get_label() in ("Personal", "Work")]
+        self.assertIn("Work", names)
+
+    def test_clicking_a_day_is_reported_once(self):
+        bar = self.sidebar()
+        seen = []
+        bar.connect("date-selected", lambda _b, day: seen.append(day))
+        bar._on_day_selected(bar._mini_calendar)
+        self.assertEqual(len(seen), 1)
+
+    def test_setting_the_day_does_not_report_it_back(self):
+        """Otherwise the window's own update returns as a user selection."""
+        from datetime import date, timedelta
+        bar = self.sidebar()
+        seen = []
+        bar.connect("date-selected", lambda _b, day: seen.append(day))
+        bar.select_day(date.today() + timedelta(days=3))
+        self.assertEqual(seen, [], "the sidebar answered its own update")
+
+    def test_the_manage_button_asks_the_window(self):
+        from gi.repository import Gtk as _Gtk
+        bar = self.sidebar()
+        asked = []
+        bar.connect("manage-requested", lambda *_: asked.append(True))
+        for widget in _walk(bar):
+            if (isinstance(widget, _Gtk.Button)
+                    and getattr(widget, "kairos_accessible_label", "")
+                    == "Manage calendars"):
+                widget.emit("clicked")
+        self.assertEqual(asked, [True])
+
+    def test_an_upcoming_event_is_passed_through(self):
+        from gi.repository import Gtk as _Gtk
+        self.add("Soon", hours_ahead=1)
+        bar = self.sidebar()
+        seen = []
+        bar.connect("event-activated", lambda _b, occ, _w: seen.append(occ.summary))
+        for widget in _walk(bar.upcoming):
+            if isinstance(widget, _Gtk.Button):
+                widget.emit("clicked")
+                break
+        self.assertEqual(seen, ["Soon"])
+
+
+def _walk(widget):
+    yield widget
+    child = widget.get_first_child()
+    while child is not None:
+        yield from _walk(child)
+        child = child.get_next_sibling()

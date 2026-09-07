@@ -71,6 +71,7 @@ kairos/
   app.py            the application: startup, actions, shortcuts, lifecycle
   ui/
     window.py         the main window; the only place that knows all the views
+    sidebar.py        the month, "Up next" and the calendar list
     month_view.py     the month grid
     week_view.py      the week and day grids (one class, different day counts)
     agenda_view.py    the scrolling list
