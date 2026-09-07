@@ -316,11 +316,26 @@ class CalDAVBackend(Backend):
             event=True,
             expand=False,
         )
+
+        # Not every server filters by date correctly. Some ignore the
+        # time-range and return nothing rather than everything, which looks
+        # from the outside exactly like an empty calendar — the calendar
+        # appears in the sidebar and never has anything in it. Asking for the
+        # whole collection costs one more request and settles it.
+        if not results:
+            everything = self._guarded(
+                collection.events, f"read “{calendar.name}”")
+            if everything:
+                log.info("%s: the date filter returned nothing but the "
+                         "collection holds %d object(s); reading all of them",
+                         calendar.name, len(everything))
+                results = everything
+
         etags = self._etags_in(collection)
 
         events: list[Event] = []
         for item in results:
-            text = getattr(item, "data", None)
+            text = self._data_of(item)
             if not text:
                 continue
             if len(text) > MAX_RESPONSE_BYTES:
@@ -337,7 +352,29 @@ class CalDAVBackend(Backend):
             for event in parsed:
                 event.raw_ics = text
                 events.append(event)
+
+        log.info("%s: %d object(s) from the server, %d event(s) parsed",
+                 calendar.name, len(results), len(events))
         return events
+
+    @staticmethod
+    def _data_of(item) -> str:
+        """The iCalendar text of one result, fetched separately if need be.
+
+        A calendar-query is supposed to return the event data alongside each
+        href, and most servers do. Some return only the hrefs, and then every
+        object arrives empty — which Kairos used to skip silently, so the
+        calendar looked empty rather than broken.
+        """
+        text = getattr(item, "data", None)
+        if text:
+            return text
+        try:
+            item.load()
+        except Exception as exc:
+            log.warning("could not read %s (%s)", getattr(item, "url", "?"), exc)
+            return ""
+        return getattr(item, "data", None) or ""
 
     def _etags_in(self, collection) -> dict[str, str]:
         """Every resource's ETag in the collection, keyed by path.

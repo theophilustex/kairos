@@ -115,6 +115,11 @@ DEFAULTS: dict[str, Any] = {
     # and is a genuinely bad idea; it is here because some self-signed
     # home servers leave people no alternative.
     "verify_tls_certificates": True,
+    # When false, Kairos will not delete an event from any calendar — not
+    # from the interface, not from a queued change, not from a sync. For
+    # people who would rather tidy up in another client than risk this one
+    # removing something.
+    "allow_deleting_events": True,
 }
 
 #: Keys whose values must be one of a fixed set.  Anything else falls back to

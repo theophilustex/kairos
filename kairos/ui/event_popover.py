@@ -15,6 +15,7 @@ from gi.repository import Adw, GObject, Gtk  # noqa: E402
 
 from kairos import formatting
 from kairos.ical import describe_rrule
+from kairos.config import settings
 from kairos.models import Occurrence
 from kairos.security import find_url, is_meeting_url
 from kairos.ui.widgets import colour_swatch
@@ -113,10 +114,14 @@ class EventPopover(Gtk.Popover):
             buttons.append(join)
 
         if editable:
-            delete = Gtk.Button(label="Delete")
-            delete.add_css_class("destructive-action")
-            delete.connect("clicked", self._on_delete)
-            buttons.append(delete)
+            # Not merely disabled: a button that is always greyed out is
+            # clutter, and the setting exists for people who never want to
+            # see the option.
+            if settings.get_bool("allow_deleting_events"):
+                delete = Gtk.Button(label="Delete")
+                delete.add_css_class("destructive-action")
+                delete.connect("clicked", self._on_delete)
+                buttons.append(delete)
 
             edit = Gtk.Button(label="Edit")
             # Only one primary action per bubble. When there is a meeting to

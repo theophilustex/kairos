@@ -543,3 +543,149 @@ class SplittingASeries(CalDAVServerTestCase):
         self.assertEqual(len(after), len(before))
         self.assertEqual({o.summary for o in after[:2]}, {"Standup"})
         self.assertEqual({o.summary for o in after[2:]}, {"Team sync"})
+
+
+class DeletionSwitchedOff(CalDAVServerTestCase):
+    """A deletion already queued when the user turns deleting off.
+
+    Needs a real server: a local calendar clears its pending flag without
+    pushing anything, so the queue is only meaningful for a remote one.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from kairos.config import settings
+        settings.set("allow_deleting_events", True)
+
+    def tearDown(self):
+        from kairos.config import settings
+        settings.set("allow_deleting_events", True)
+        super().tearDown()
+
+    def synced(self):
+        """A SyncManager wired to this Radicale, with one event on it."""
+        import tempfile
+        from pathlib import Path
+        from kairos.accounts import AccountStore
+        from kairos.storage import Storage
+        from kairos.sync import SyncManager
+
+        directory = Path(tempfile.mkdtemp(prefix="kairos-nodelete-dav-"))
+        accounts = AccountStore(directory / "accounts.json")
+        accounts.add(self.account)
+        from kairos.security import credentials
+        credentials.set_password(self.account.id, "secret123")
+
+        manager = SyncManager(store=Storage(directory / "cache.db"),
+                              accounts=accounts)
+        manager.storage.save_calendar(self.calendar)
+        saved = self.backend.save_event(self.calendar, self.make("Doomed"))
+        manager.storage.save_event(saved)
+        return manager, saved
+
+    def test_a_queued_deletion_is_not_pushed(self):
+        from kairos.config import settings
+        manager, saved = self.synced()
+        try:
+            manager.storage.mark_event_deleted(self.calendar.id, saved.uid)
+            settings.set("allow_deleting_events", False)
+            manager._push_pending()
+
+            self.assertEqual(len(self.fetch()), 1,
+                             "the event was deleted from the server anyway")
+            self.assertIsNotNone(
+                manager.storage.get_event(self.calendar.id, saved.uid))
+        finally:
+            manager.storage.close()
+
+    def test_the_deletion_still_happens_once_it_is_allowed_again(self):
+        from kairos.config import settings
+        manager, saved = self.synced()
+        try:
+            manager.storage.mark_event_deleted(self.calendar.id, saved.uid)
+            settings.set("allow_deleting_events", False)
+            manager._push_pending()
+            self.assertEqual(len(self.fetch()), 1)
+
+            settings.set("allow_deleting_events", True)
+            manager._push_pending()
+            self.assertEqual(len(self.fetch()), 0,
+                             "the queued deletion was lost rather than held")
+        finally:
+            manager.storage.close()
+
+
+class ServersThatMisbehave(CalDAVServerTestCase):
+    """Calendars that come back empty when they are not.
+
+    Reported: Kairos found the calendars on a real server but showed no
+    events in any of them. Two causes look identical from the outside and
+    both are silent — a server whose date filter matches nothing, and one
+    that returns hrefs without the calendar data attached.
+    """
+
+    def test_a_date_filter_that_matches_nothing_falls_back(self):
+        """Some servers ignore or mishandle time-range and return nothing."""
+        self.backend.save_event(self.calendar, self.make("Invisible"))
+
+        import caldav
+        collection = caldav.Calendar(client=self.backend._connect(),
+                                     url=self.calendar.url)
+        real_search = collection.search
+        self.backend._collection = lambda _c: collection
+
+        def only_the_dated_query_fails(*args, **kwargs):
+            # caldav's events() calls search() too, so stubbing search
+            # outright would disable the fallback as well as the thing it
+            # is meant to rescue. Only the ranged query goes blind.
+            if kwargs.get("start") is not None or kwargs.get("end") is not None:
+                return []
+            return real_search(*args, **kwargs)
+
+        collection.search = only_the_dated_query_fails
+        try:
+            found = self.backend.fetch_events(
+                self.calendar, self.now - timedelta(days=2),
+                self.now + timedelta(days=30))
+        finally:
+            collection.search = real_search
+        self.assertEqual([e.summary for e in found], ["Invisible"],
+                         "the fallback did not rescue the empty result")
+
+    def test_objects_without_data_are_loaded_rather_than_skipped(self):
+        """A calendar-query may return only hrefs; those used to be dropped."""
+        self.backend.save_event(self.calendar, self.make("Lazy"))
+
+        import caldav
+        collection = caldav.Calendar(client=self.backend._connect(),
+                                     url=self.calendar.url)
+        results = collection.search(
+            start=self.now - timedelta(days=2),
+            end=self.now + timedelta(days=30), event=True, expand=False)
+        self.assertTrue(results)
+
+        item = results[0]
+        item._data = None                      # as if the server sent no data
+        recovered = self.backend._data_of(item)
+        self.assertTrue(recovered, "the data was not fetched on demand")
+        self.assertIn("Lazy", recovered)
+
+    def test_an_ordinary_server_still_takes_one_request(self):
+        """The fallback must not fire when the date filter works."""
+        self.backend.save_event(self.calendar, self.make("Ordinary"))
+
+        import caldav
+        collection = caldav.Calendar(client=self.backend._connect(),
+                                     url=self.calendar.url)
+        calls = []
+        real_events = collection.events
+        collection.events = lambda *a, **k: (calls.append(1), real_events())[1]
+        self.backend._collection = lambda _c: collection
+        try:
+            found = self.backend.fetch_events(
+                self.calendar, self.now - timedelta(days=2),
+                self.now + timedelta(days=30))
+        finally:
+            collection.events = real_events
+        self.assertEqual([e.summary for e in found], ["Ordinary"])
+        self.assertEqual(calls, [], "asked for everything when it need not")

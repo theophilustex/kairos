@@ -8,6 +8,34 @@ kairos --debug
 
 ---
 
+## My calendars appear but they have no events in them
+
+Kairos found the calendars, so the address and password are right; something
+is going wrong one step later. Run the diagnostic against your own server —
+it only reads, and prints no event titles unless you ask it to:
+
+```sh
+./packaging/diagnose-caldav.py https://dav.example.com/ you@example.com
+```
+
+It walks the same path Kairos does and says which step produced nothing.
+The three answers it gives:
+
+- **"The server ignores or mishandles the date filter."** Kairos asks for
+  events between two dates; some servers answer that with nothing at all
+  rather than with everything in range. Kairos now notices an empty answer
+  and asks again for the whole collection, so this should fix itself — make
+  sure you are running a current build.
+- **"The server reports this calendar as empty."** The collection really does
+  look empty to us. Check you are pointing at the right account, and that the
+  events are not outside the sync window (`sync_window_past_days` and
+  `sync_window_future_days` in [configuration](configuration.md)).
+- **"Objects came back but none could be parsed."** The server is sending
+  iCalendar that Kairos cannot read. Please report the output.
+
+Running `kairos --debug` also logs one line per calendar per sync saying how
+many objects came back and how many events were parsed from them.
+
 ## It will not start
 
 ### `Namespace Gtk not available` or `ValueError: Namespace Adw not available`

@@ -154,6 +154,7 @@ can disagree with reality.
 
 | Key | Default | Values | |
 |---|---|---|---|
+| `allow_deleting_events` | `true` | true / false | Off means Kairos never deletes anything. See below. |
 | `verify_tls_certificates` | `true` | true / false | Turning this off is a bad idea; see [security](security.md). |
 | `allow_insecure_http` | `false` | true / false | Even on, plain http is only allowed to a private address. |
 

@@ -167,6 +167,13 @@ lets the earlier occurrences keep their old details.
 **Undo** button for a few seconds afterwards — for a whole event, and for a
 single occurrence of a repeating one.
 
+**Or stop it deleting anything at all.** Preferences → Sync & security →
+*Allow deleting events*. Turn it off and the **Delete** button disappears, and
+nothing Kairos does will remove an event from your calendar — including a
+deletion that was already queued and waiting to be sent, which is held rather
+than dropped and goes out if you turn the setting back on. Creating and
+editing still work.
+
 ### Times and timezones
 
 Events are always shown on your clock. A server usually stores events in UTC,

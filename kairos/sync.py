@@ -170,8 +170,27 @@ class SyncManager(GObject.Object):
         if needs_push:
             self._run_in_background(self._push_pending, "saving your change")
 
+    @staticmethod
+    def deleting_allowed() -> bool:
+        """Whether Kairos may remove anything at all.
+
+        Checked here rather than only in the interface: hiding a button stops
+        the obvious route, and this stops every other one — a queued deletion
+        from before the setting changed, a drag, a keyboard shortcut, a
+        future caller that has not thought about it.
+        """
+        return settings.get_bool("allow_deleting_events")
+
     def delete_event(self, event: Event) -> None:
         """Remove an event locally and push the deletion in the background."""
+        if not self.deleting_allowed():
+            log.info("refusing to delete %s: deletion is switched off",
+                     event.uid)
+            self.emit("sync-finished", False,
+                      "Deleting events is switched off in Preferences → "
+                      "Sync & security.")
+            return
+
         calendar = self.storage.get_calendar(event.calendar_id)
         if calendar is None:
             return
@@ -227,6 +246,14 @@ class SyncManager(GObject.Object):
 
     def delete_occurrence(self, occurrence: Occurrence, *, scope: str) -> None:
         """Remove one occurrence, the rest of the series, or all of it."""
+        if not self.deleting_allowed():
+            log.info("refusing to delete an occurrence of %s: deletion is "
+                     "switched off", occurrence.uid)
+            self.emit("sync-finished", False,
+                      "Deleting events is switched off in Preferences → "
+                      "Sync & security.")
+            return
+
         original = occurrence.event
         if scope == self.ALL_EVENTS or not self._is_one_of_a_series(occurrence):
             self.delete_event(original)
@@ -494,6 +521,13 @@ class SyncManager(GObject.Object):
                 backend = backends[account.id]
 
                 if pending == PENDING_DELETE:
+                    if not self.deleting_allowed():
+                        # Queued before the setting was turned off. Leave the
+                        # row alone rather than pushing a deletion the user
+                        # has since said they do not want.
+                        log.info("not pushing the queued deletion of %s: "
+                                 "deletion is switched off", event.uid)
+                        continue
                     backend.delete_event(calendar, event)
                     self.storage.forget_event(event.calendar_id, event.uid)
                 else:

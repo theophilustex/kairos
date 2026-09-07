@@ -364,6 +364,21 @@ class PreferencesDialog(Adw.PreferencesDialog):
         ))
         page.add(sync)
 
+        safety = Adw.PreferencesGroup(
+            title="Protecting your calendar",
+            description=(
+                "Kairos writes to the same calendars your other devices read. "
+                "This decides how much it is allowed to take away."
+            ),
+        )
+        safety.add(self._switch(
+            "Allow deleting events", "allow_deleting_events",
+            "Turn this off and Kairos will never remove an event — the Delete "
+            "button disappears, and any deletion still waiting to be sent is "
+            "left unsent. You can still create and edit.",
+        ))
+        page.add(safety)
+
         security = Adw.PreferencesGroup(
             title="Security",
             description=(
