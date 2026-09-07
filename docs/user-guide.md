@@ -100,6 +100,12 @@ is drawn as **one bar across exactly those days**, not repeated in each one,
 and keeps the same line all the way along; a bar reaching past the edge of the
 week is cut off at it. Where bars overlap they stack, longest at the top.
 
+**Drag a block** to move an event, or pull its bottom edge to change when it
+ends. Everything snaps to the quarter hour, and dragging sideways moves the
+event to another day. An event cannot be dragged out of its day or shortened
+past its own start. Dragging one occurrence of a repeating event asks which
+occurrences you meant, exactly as the editor does.
+
 <img src="images/week-view.png" alt="The week view: a timed grid with overlapping events side by side and all-day events in a strip above">
 
 **Agenda** — a plain list of what is coming, day by day, skipping empty days.
@@ -237,6 +243,22 @@ is closed* in the same place, and closing the window will quit.
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Preferences |
 | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window |
 | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit |
+
+### In the month grid
+
+Click a day, or <kbd>Tab</kbd> to the grid, and then:
+
+| | |
+|---|---|
+| <kbd>←</kbd> <kbd>→</kbd> | Previous / next day |
+| <kbd>↑</kbd> <kbd>↓</kbd> | Same day last / next week |
+| <kbd>Home</kbd> / <kbd>End</kbd> | First / last day of the week |
+| <kbd>Page Up</kbd> / <kbd>Page Down</kbd> | Same day last / next month |
+| <kbd>Enter</kbd> or <kbd>Space</kbd> | Open that day |
+
+Walking off the edge of the month brings the next one in rather than stopping.
+Each day announces its date and how many events it has, so the grid can be
+used with a screen reader.
 
 They are all in one table at the top of
 [`kairos/app.py`](../kairos/app.py) if you want different ones.

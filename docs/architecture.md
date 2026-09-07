@@ -197,6 +197,7 @@ the UI.
 | A keyboard shortcut | One line in `SHORTCUTS` in `app.py`. |
 | An icon-only button | Wrap it in `describe()` from `ui/widgets.py`, or `test_accessibility.py` fails. |
 | A tray menu entry | One `MenuItem` in `_start_tray()` in `app.py`. |
+| A meeting-link provider | One hostname in `MEETING_HOSTS` in `security.py`. |
 | Another protocol | A class implementing `backends/base.py`, and a case in `backend_for()`. |
 
 ### The view contract
@@ -251,6 +252,12 @@ reports version 3. Omitting one is invisible: GDBus rejects the call before
 the handler runs, libdbusmenu discards the error, and the menu draws perfectly
 while doing nothing. `tests/test_background.py` therefore asserts on the
 *declaration*, not just the handler.
+
+**Dragging is row arithmetic too.** A drag moves a block by re-attaching it
+at different grid rows, which snaps to the quarter hour for free and needs no
+drawing code of its own. `dragged_times()` is the whole calculation and takes
+no widgets, so the awkward cases — dragging past midnight, shrinking an event
+to nothing — are tested without a pointer.
 
 **Why is the week grid made of rows rather than pixels?** Each day is a
 `Gtk.Grid` of fifteen-minute rows, and an event is attached spanning the rows

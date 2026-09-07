@@ -23,12 +23,12 @@ from datetime import date, timedelta
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GObject, Gtk  # noqa: E402
+from gi.repository import Gdk, GObject, Gtk  # noqa: E402
 
 from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, start_of_day
-from kairos.ui.widgets import (assign_banner_rows, clear_children,
+from kairos.ui.widgets import (assign_banner_rows, clear_children, describe,
                                mark_event_widget, on_click,
                                style_widget, tinted_button_css)
 
@@ -94,6 +94,16 @@ def banner_lines(by_day: dict, days: list[date]) -> list[dict]:
     return per_day
 
 
+def _add_months(day: date, months: int) -> date:
+    """The same day-of-month a month away, clamped to a month that has it."""
+    total = day.year * 12 + (day.month - 1) + months
+    year, month = divmod(total, 12)
+    month += 1
+    last = [31, 29 if year % 4 == 0 and (year % 100 or year % 400 == 0) else 28,
+            31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+    return date(year, month, min(day.day, last))
+
+
 class DayCell(Gtk.Box):
     """One day in the grid: a number, then a stack of event chips."""
 
@@ -111,6 +121,13 @@ class DayCell(Gtk.Box):
         self._chips = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._chips.set_vexpand(True)
         self.append(self._chips)
+
+        # Reachable by keyboard, and named for a screen reader. Without both
+        # the grid is a picture: nothing can be focused, so nothing can be
+        # announced however carefully it is labelled.
+        self.set_focusable(True)
+        self.set_focus_on_click(True)
+        describe(self, formatting.format_date(day), tooltip=False)
 
         on_click(self, self._on_click)
 
@@ -164,6 +181,13 @@ class DayCell(Gtk.Box):
             self._chips.append(self._make_chip(occurrence, colours))
             rows_used += 1
             events_shown += 1
+
+        # Re-announce with what is actually on the day, so a screen reader
+        # reads "Monday 7 September, 2 events" rather than a bare date.
+        count = len(banners) + len(timed)
+        describe(self, formatting.format_date(self.day) if not count else
+                 f"{formatting.format_date(self.day)}, {count} "
+                 f"event{'s' if count != 1 else ''}", tooltip=False)
 
         hidden = len(banners) + len(timed) - events_shown
         if hidden > 0:
@@ -289,6 +313,13 @@ class MonthView(Gtk.Box):
         scroller.set_child(self._grid)
         self.append(scroller)
 
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key_pressed)
+        # CAPTURE so the arrows move the selection before the scrolled window
+        # takes them to mean "scroll", which is not what a grid should do.
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self.add_controller(keys)
+
     # ------------------------------------------------------------------
     # The view contract
     # ------------------------------------------------------------------
@@ -314,6 +345,64 @@ class MonthView(Gtk.Box):
         first = self._anchor.replace(day=1)
         # Day 28 exists in every month, so this never overflows.
         self.set_date((first + timedelta(days=32)).replace(day=1))
+
+    #: What each key moves the selection by, in days.  Up and down are a
+    #: week because that is what a row of this grid is.
+    KEY_MOVES = {
+        Gdk.KEY_Left: -1, Gdk.KEY_KP_Left: -1,
+        Gdk.KEY_Right: 1, Gdk.KEY_KP_Right: 1,
+        Gdk.KEY_Up: -7, Gdk.KEY_KP_Up: -7,
+        Gdk.KEY_Down: 7, Gdk.KEY_KP_Down: 7,
+    }
+
+    def _on_key_pressed(self, _controller, keyval, _keycode, state) -> bool:
+        """Move around the grid with the arrows, open a day with Enter.
+
+        Returns ``True`` to stop the key going any further, which is what
+        keeps the arrows from scrolling the view instead of moving.
+        """
+        if state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK):
+            return False        # Ctrl+arrow and Alt+arrow belong to the window
+
+        step = self.KEY_MOVES.get(keyval)
+        if step is not None:
+            self.focus_day(self._selected + timedelta(days=step))
+            return True
+
+        if keyval in (Gdk.KEY_Home, Gdk.KEY_KP_Home):
+            self.focus_day(formatting.week_start(self._selected))
+            return True
+        if keyval in (Gdk.KEY_End, Gdk.KEY_KP_End):
+            self.focus_day(formatting.week_start(self._selected) + timedelta(days=6))
+            return True
+        if keyval in (Gdk.KEY_Page_Up, Gdk.KEY_KP_Page_Up):
+            self.focus_day(_add_months(self._selected, -1))
+            return True
+        if keyval in (Gdk.KEY_Page_Down, Gdk.KEY_KP_Page_Down):
+            self.focus_day(_add_months(self._selected, 1))
+            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_space):
+            self.emit("day-activated", self._selected)
+            return True
+        return False
+
+    def focus_day(self, day: date) -> None:
+        """Select ``day``, paging the grid if it is not on screen, and focus it.
+
+        Paging is what makes the arrows feel like a calendar rather than a
+        table: walking off the end of the month brings the next one in rather
+        than stopping dead.
+        """
+        if day in self._cells:
+            self.select_day(day)          # emits date-selected if it changed
+        else:
+            # Paging: set_date rebuilds the grid but says nothing, so the
+            # window would not learn the day had moved.
+            self.set_date(day)
+            self.emit("date-selected", day)
+        cell = self._cells.get(day)
+        if cell is not None:
+            cell.grab_focus()
 
     def select_day(self, day: date) -> None:
         if day == self._selected:

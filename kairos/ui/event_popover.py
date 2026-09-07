@@ -231,7 +231,8 @@ def confirm_delete(parent: Gtk.Widget, occurrence: Occurrence, on_confirm) -> No
     dialog.present(parent)
 
 
-def ask_edit_scope(parent: Gtk.Widget, occurrence: Occurrence, on_choice) -> None:
+def ask_edit_scope(parent: Gtk.Widget, occurrence: Occurrence, on_choice,
+                   *, on_cancel=None) -> None:
     """Ask whether an edit applies to one occurrence or the whole series.
 
     Calls ``on_choice(scope=...)`` with one of :data:`SCOPES`, and does not
@@ -249,6 +250,14 @@ def ask_edit_scope(parent: Gtk.Widget, occurrence: Occurrence, on_choice) -> Non
         verb="Change",
         destructive=False,
     )
-    dialog.connect("response", lambda _d, response: (
-        on_choice(scope=response) if response in SCOPES else None))
+
+    def on_response(_dialog, response: str) -> None:
+        if response in SCOPES:
+            on_choice(scope=response)
+        elif on_cancel is not None:
+            # A drag that is cancelled has already moved the block on screen;
+            # the caller uses this to put it back.
+            on_cancel()
+
+    dialog.connect("response", on_response)
     dialog.present(parent)

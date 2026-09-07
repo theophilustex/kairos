@@ -48,6 +48,41 @@ MIN_BLOCK_PIXELS = 22
 TIME_LABEL_PIXELS = 36
 
 
+#: How close to a block's bottom edge a press has to be to mean "resize"
+#: rather than "move".  Small enough not to steal ordinary drags, big enough
+#: to hit without care.
+RESIZE_GRIP_PIXELS = 8
+
+
+def dragged_times(occurrence: Occurrence, *, rows: int, days: int,
+                  resizing: bool) -> tuple[datetime, datetime]:
+    """Where a drag of ``rows`` rows and ``days`` days leaves an event.
+
+    Pure arithmetic, kept out of the gesture handler so it can be tested
+    without a pointer.  Two rules it enforces, both of which come from
+    dragging past an edge:
+
+    * an event cannot be dragged out of its day — the grid has nowhere to
+      draw it, so it stops at midnight either end;
+    * a resize cannot make an event end before it starts, so the end stops
+      one row after the start.
+    """
+    start_row = row_for(occurrence.start, occurrence.start.date())
+    end_row = max(start_row + 1, row_for(occurrence.end, occurrence.start.date()))
+
+    if resizing:
+        new_end = min(ROWS_PER_DAY, max(start_row + 1, end_row + rows))
+        new_start = start_row
+    else:
+        span = end_row - start_row
+        new_start = min(ROWS_PER_DAY - span, max(0, start_row + rows))
+        new_end = new_start + span
+
+    midnight = start_of_day(occurrence.start.date() + timedelta(days=days))
+    return (midnight + timedelta(minutes=new_start * MINUTES_PER_ROW),
+            midnight + timedelta(minutes=new_end * MINUTES_PER_ROW))
+
+
 def assign_columns(occurrences: list[Occurrence]) -> list[tuple[Occurrence, int, int]]:
     """Work out where side-by-side overlapping events should sit.
 
@@ -110,6 +145,8 @@ class WeekView(Gtk.Box):
 
     __gsignals__ = {
         "event-activated": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
+        # (occurrence, new start, new end) — emitted when a block is dragged.
+        "event-moved": (GObject.SignalFlags.RUN_FIRST, None, (object, object, object)),
         "create-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "day-activated": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "date-selected": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
@@ -122,6 +159,9 @@ class WeekView(Gtk.Box):
         self._anchor = date.today()
         self._first_day = date.today()
         self._day_grids: list[Gtk.Grid] = []
+        self._drag: dict = {}
+        self._dragging_grid = None
+        self._calendar_cache = None
         self._now_line: Gtk.Widget | None = None
         self._scrolled_once = False
 
@@ -289,6 +329,7 @@ class WeekView(Gtk.Box):
     # ------------------------------------------------------------------
 
     def refresh(self) -> None:
+        self._calendar_cache = None      # colours and read-only flags may have moved
         self._build_gutter()
         self._build_columns()
         self._build_headings()
@@ -428,7 +469,109 @@ class WeekView(Gtk.Box):
         button.set_tooltip_text(f"{occurrence.summary}\n{formatting.format_time_range(occurrence)}")
         button.connect("clicked", lambda b: self.emit("event-activated", occurrence, b))
         mark_event_widget(button, occurrence)
+        self._make_draggable(button, occurrence)
         return button
+
+    # ------------------------------------------------------------------
+    # Dragging a block to move or resize it
+    # ------------------------------------------------------------------
+
+    def _make_draggable(self, block: Gtk.Widget, occurrence: Occurrence) -> None:
+        """Let a block be dragged to a new time, or its end pulled about.
+
+        Read-only calendars are left alone: offering a drag that silently
+        does nothing is worse than not offering one.
+        """
+        calendar = self._calendars_by_id().get(occurrence.calendar_id)
+        if calendar is not None and calendar.read_only:
+            return
+
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self._on_drag_begin, block, occurrence)
+        drag.connect("drag-update", self._on_drag_update, block, occurrence)
+        drag.connect("drag-end", self._on_drag_end, block, occurrence)
+        block.add_controller(drag)
+
+    def _calendars_by_id(self) -> dict:
+        if getattr(self, "_calendar_cache", None) is None:
+            self._calendar_cache = {c.id: c for c in self.sync.calendars()}
+        return self._calendar_cache
+
+    def _on_drag_begin(self, _gesture, _x, start_y, block, occurrence) -> None:
+        height = block.get_allocated_height()
+        self._drag = {
+            # A press near the bottom edge means "change when this ends";
+            # anywhere else means "move the whole thing". A block whose
+            # height is not known yet is treated as a move: that is the
+            # commoner action, and resizing something by an unknown amount
+            # is the worse thing to guess at.
+            "resizing": height > 0 and height - start_y <= RESIZE_GRIP_PIXELS,
+            "rows": 0,
+            "days": 0,
+            "moved": False,
+        }
+
+    def _on_drag_update(self, gesture, offset_x, offset_y, block, occurrence) -> None:
+        if not self._drag:
+            return
+        row_height = max(1, self._row_height())
+        rows = round(offset_y / row_height)
+        days = self._day_offset(gesture, offset_x)
+
+        if abs(offset_y) > 3 or days:
+            self._drag["moved"] = True
+        if rows == self._drag["rows"] and days == self._drag["days"]:
+            return
+        self._drag["rows"], self._drag["days"] = rows, days
+        self._preview(block, occurrence)
+
+    def _day_offset(self, gesture, offset_x: float) -> int:
+        """How many day columns the pointer has travelled."""
+        if not self._day_grids:
+            return 0
+        width = self._day_grids[0].get_allocated_width()
+        if width <= 0:
+            return 0
+        moved = round(offset_x / width)
+        index = self._day_grids.index(self._dragging_grid) if self._dragging_grid else 0
+        # Clamp to the week on screen: there is no column to land on outside it.
+        return max(-index, min(moved, len(self._day_grids) - 1 - index))
+
+    def _preview(self, block, occurrence) -> None:
+        """Re-attach the block where the drag currently points.
+
+        The grid is doing the layout, so moving a block really is a matter of
+        attaching it at different rows — which snaps to the quarter hour for
+        free and needs no separate drawing code.
+        """
+        grid = block.get_parent()
+        if not isinstance(grid, Gtk.Grid):
+            return
+        self._dragging_grid = grid
+        column, _row, width, _height = grid.query_child(block)
+        start, end = dragged_times(occurrence, rows=self._drag["rows"], days=0,
+                                   resizing=self._drag["resizing"])
+        day = occurrence.start.date()
+        start_row = row_for(start, day)
+        span = max(1, row_for(end, day) - start_row)
+        grid.remove(block)
+        grid.attach(block, column, start_row, width, min(span, ROWS_PER_DAY - start_row))
+
+    def _on_drag_end(self, gesture, offset_x, offset_y, block, occurrence) -> None:
+        state, self._drag = self._drag, {}
+        self._dragging_grid = None
+        if not state or not state.get("moved"):
+            # A press that never really moved is a click, and the button's
+            # own "clicked" handler will open the event.
+            return
+
+        start, end = dragged_times(occurrence, rows=state["rows"],
+                                   days=state["days"],
+                                   resizing=state["resizing"])
+        if (start, end) == (occurrence.start, occurrence.end):
+            self.refresh()
+            return
+        self.emit("event-moved", occurrence, start, end)
 
     def _make_chip(self, occurrence: Occurrence, colours: dict, css_class: str) -> Gtk.Widget:
         colour = colours.get(occurrence.calendar_id, "#3584e4")

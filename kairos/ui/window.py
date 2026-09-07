@@ -25,7 +25,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from kairos import APP_NAME, VERSION
 from kairos.config import settings
@@ -133,6 +133,8 @@ class CalendarWindow(Adw.ApplicationWindow):
         for key, label, factory in self.VIEWS:
             view = factory(self.sync)
             view.connect("event-activated", self._on_event_activated)
+            if GObject.signal_lookup("event-moved", type(view)):
+                view.connect("event-moved", self._on_event_moved)
             view.connect("create-requested", self._on_create_requested)
             view.connect("day-activated", self._on_day_activated)
             view.connect("date-selected", self._on_date_selected)
@@ -359,6 +361,7 @@ class CalendarWindow(Adw.ApplicationWindow):
 
     def _on_date_selected(self, _view, day: date) -> None:
         self._current_day = day
+        self._update_title()
         self._sidebar.select_day(self._current_day)
 
     def _on_day_activated(self, _view, day: date) -> None:
@@ -473,6 +476,27 @@ class CalendarWindow(Adw.ApplicationWindow):
         editor = EventEditor(calendars, start=start)
         editor.connect("saved", lambda _e, event: self.sync.save_event(event))
         editor.present(self)
+
+    def _on_event_moved(self, view, occurrence: Occurrence,
+                        start: datetime, end: datetime) -> None:
+        """A block was dragged to a new time.
+
+        Asks which occurrences it applies to first, exactly as the editor
+        does — dragging one instance of a weekly meeting is the commonest
+        reason anyone wants "just this one".
+        """
+        from dataclasses import replace as _replace
+
+        def apply(*, scope: str) -> None:
+            self.sync.save_occurrence(
+                occurrence,
+                _replace(occurrence.event, start=start, end=end, raw_ics=""),
+                scope=scope)
+
+        def cancelled() -> None:
+            view.refresh()          # put the block back where it came from
+
+        ask_edit_scope(self, occurrence, apply, on_cancel=cancelled)
 
     def _on_event_activated(self, _view, occurrence: Occurrence, source: Gtk.Widget) -> None:
         """Show the detail bubble for the event the user just clicked.
