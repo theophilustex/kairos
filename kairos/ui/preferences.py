@@ -401,6 +401,23 @@ class PreferencesDialog(Adw.PreferencesDialog):
         )
         security.add(insecure)
 
+        ca_row = Adw.EntryRow(title="Certificate authority file")
+        ca_row.set_text(settings.get("ca_certificate_path"))
+        ca_row.connect("changed", lambda row: settings.set(
+            "ca_certificate_path", row.get_text().strip()))
+        security.add(ca_row)
+
+        ca_hint = Adw.ActionRow(
+            subtitle=(
+                "A PEM file for the authority that signed your server's "
+                "certificate. For a self-hosted box this is the right answer "
+                "to “the certificate could not be verified” — it keeps the "
+                "connection checked, rather than turning the check off."
+            ),
+        )
+        ca_hint.set_subtitle_lines(0)
+        security.add(ca_hint)
+
         keyring_row = Adw.ActionRow(title="Password storage")
         if credentials.available:
             keyring_row.set_subtitle("Passwords are stored in your system keyring.")

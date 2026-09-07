@@ -16,10 +16,23 @@ and prints no event titles unless you add `--show-titles`, so the output is
 safe to paste into a bug report:
 
 ```sh
-kairos --diagnose https://dav.example.com/ you@example.com
+kairos --diagnose
 
 # or, running the AppImage:
-./Kairos-x86_64.AppImage --diagnose https://dav.example.com/ you@example.com
+./Kairos-x86_64.AppImage --diagnose
+```
+
+With no arguments it asks about the accounts you have already set up, using
+their own settings and stored passwords — which is what you want, because
+typing a URL instead builds a *fresh* account with the defaults. That is how
+someone whose server has a self-signed certificate gets a certificate error
+from the diagnostic while the application itself works: the saved account has
+verification turned off and the new one does not.
+
+To ask about a server you have not added yet:
+
+```sh
+kairos --diagnose https://dav.example.com/ you@example.com
 ```
 
 It walks the same path Kairos does and says which step produced nothing.

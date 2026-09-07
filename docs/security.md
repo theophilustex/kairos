@@ -153,6 +153,32 @@ python3 -m unittest tests.test_security -v
 
 ---
 
+## A server whose certificate is not publicly trusted
+
+A self-hosted box — a NAS, a home server — usually presents a certificate no
+public root signs, and Kairos refuses it:
+
+    the server's security certificate could not be verified
+
+Three ways out, best first:
+
+1. **Point Kairos at the authority that signed it.** Put the CA's PEM file
+   somewhere readable and set `ca_certificate_path` (Preferences → Sync &
+   security). The connection is still verified, against that authority
+   instead of the public ones — you lose nothing. A path that is not a file
+   is ignored with a warning and Kairos goes on verifying normally, so a
+   typo cannot silently stop the checking.
+2. **Get a certificate the machine already trusts.** Let's Encrypt is free,
+   and a Synology NAS can request one for you.
+3. **Turn off "Verify the security certificate" for that account.** It
+   works, and it means anyone on the network between you and the server can
+   read and alter your calendar. It is per-account, so the rest keep
+   checking.
+
+`kairos --diagnose` says which of these you are looking at.
+
+---
+
 ## Links in events
 
 The **Join** button opens a URL taken from an event, and an event may have

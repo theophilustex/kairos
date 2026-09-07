@@ -115,6 +115,11 @@ DEFAULTS: dict[str, Any] = {
     # and is a genuinely bad idea; it is here because some self-signed
     # home servers leave people no alternative.
     "verify_tls_certificates": True,
+    # A PEM file holding the certificate authority that signed your server's
+    # certificate. For a self-hosted box — a NAS, a home server — this is the
+    # right answer to "the certificate could not be verified": it keeps the
+    # connection verified instead of turning verification off.
+    "ca_certificate_path": "",
     # When false, Kairos will not delete an event from any calendar — not
     # from the interface, not from a queued change, not from a sync. For
     # people who would rather tidy up in another client than risk this one

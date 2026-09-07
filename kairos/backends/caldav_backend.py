@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
 import caldav
@@ -151,6 +152,17 @@ class CalDAVBackend(Backend):
         verify = bool(self.account.verify_tls) and settings.get_bool("verify_tls_certificates")
         if not verify:
             log.warning("TLS verification is disabled for account %s", self.account.name)
+        else:
+            # A path here means "verify, but against this authority" — which
+            # is what a self-hosted server with its own CA needs, and is a
+            # world better than the alternative of not verifying at all.
+            bundle = settings.get("ca_certificate_path").strip()
+            if bundle:
+                if Path(bundle).is_file():
+                    verify = bundle
+                else:
+                    log.warning("ca_certificate_path is set to %s, which is "
+                                "not a file; ignoring it", bundle)
 
         # An OAuth account sends a bearer token instead of a username and
         # password — Google's CalDAV endpoint refuses Basic auth outright,
