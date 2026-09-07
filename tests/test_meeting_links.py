@@ -202,3 +202,28 @@ class TheJoinButton(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OnlyOnePrimaryAction(TheJoinButton):
+    """Two suggested buttons side by side say nothing about which to press."""
+
+    def suggested(self, popover):
+        from gi.repository import Gtk
+
+        def walk(widget):
+            yield widget
+            child = widget.get_first_child()
+            while child is not None:
+                yield from walk(child)
+                child = child.get_next_sibling()
+
+        return [w.get_label() for w in walk(popover)
+                if isinstance(w, Gtk.Button) and w.get_label()
+                and w.has_css_class("suggested-action")]
+
+    def test_join_is_the_primary_action_when_there_is_a_link(self):
+        self.assertEqual(self.suggested(
+            self.popover(url="https://meet.jit.si/x")), ["Join"])
+
+    def test_edit_is_primary_when_there_is_none(self):
+        self.assertEqual(self.suggested(self.popover(location="Room 3")), ["Edit"])

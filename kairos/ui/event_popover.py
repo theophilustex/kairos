@@ -119,7 +119,11 @@ class EventPopover(Gtk.Popover):
             buttons.append(delete)
 
             edit = Gtk.Button(label="Edit")
-            edit.add_css_class("suggested-action")
+            # Only one primary action per bubble. When there is a meeting to
+            # join, that is the one you came for, and two blue buttons side
+            # by side say nothing about which.
+            if not self._link:
+                edit.add_css_class("suggested-action")
             edit.connect("clicked", self._on_edit)
             buttons.append(edit)
         else:
