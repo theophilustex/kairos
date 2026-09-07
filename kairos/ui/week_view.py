@@ -25,7 +25,8 @@ from gi.repository import GLib, GObject, Gtk  # noqa: E402
 from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, local_timezone, start_of_day
-from kairos.ui.widgets import clear_children, on_click, style_widget, tinted_button_css
+from kairos.ui.widgets import (clear_children, mark_event_widget, on_click,
+                               style_widget, tinted_button_css)
 
 #: Rows per hour.  Four gives fifteen-minute resolution, which is as fine as
 #: anyone schedules and keeps the widget count sensible (96 rows per day).
@@ -455,6 +456,7 @@ class WeekView(Gtk.Box):
         style_widget(button, tinted_button_css(colour))
         button.set_tooltip_text(f"{occurrence.summary}\n{formatting.format_time_range(occurrence)}")
         button.connect("clicked", lambda b: self.emit("event-activated", occurrence, b))
+        mark_event_widget(button, occurrence)
         return button
 
     def _make_chip(self, occurrence: Occurrence, colours: dict, css_class: str) -> Gtk.Widget:
@@ -466,6 +468,7 @@ class WeekView(Gtk.Box):
         button.add_css_class(css_class)
         style_widget(button, tinted_button_css(colour))
         button.connect("clicked", lambda b: self.emit("event-activated", occurrence, b))
+        mark_event_widget(button, occurrence)
         return button
 
     # ------------------------------------------------------------------

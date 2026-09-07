@@ -17,7 +17,8 @@ from gi.repository import GObject, Gtk  # noqa: E402
 from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, start_of_day
-from kairos.ui.widgets import clear_children, colour_swatch, empty_state
+from kairos.ui.widgets import (clear_children, colour_swatch, empty_state,
+                               mark_event_widget)
 
 
 class AgendaView(Gtk.Box):
@@ -138,4 +139,5 @@ class AgendaView(Gtk.Box):
         button.add_css_class("flat")
         button.set_child(row)
         button.connect("clicked", lambda b: self.emit("event-activated", occurrence, b))
+        mark_event_widget(button, occurrence)
         return button

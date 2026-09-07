@@ -40,7 +40,7 @@ from kairos.ui.search_view import SearchView
 from kairos.ui.week_view import DayView, WeekView
 from kairos.ui.upcoming import UpcomingList
 from kairos.ui.widgets import (
-    SidebarSection, add_horizontal_swipe, colour_swatch,
+    SidebarSection, add_horizontal_swipe, colour_swatch, find_event_widget,
 )
 
 log = logging.getLogger(__name__)
@@ -393,6 +393,10 @@ class CalendarWindow(Adw.ApplicationWindow):
     def show_view(self, key: str) -> None:
         if key not in self._views:
             key = "month"
+        # Anything that rebuilds a view's chips has to take the popover down
+        # first: it is parented to one of them, and finalising a widget that
+        # still has a popover attached segfaults GTK.
+        self._close_popover()
         if self._search_button.get_active():
             self._search_button.set_active(False)
         self._stack.set_visible_child_name(key)
@@ -416,6 +420,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         return self._views.get(name) or self._views["month"]
 
     def _navigate(self, direction: int) -> None:
+        self._close_popover()
         view = self.current_view
         view.go_next() if direction > 0 else view.go_previous()
         self._current_day = view.selected_day
@@ -423,6 +428,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         self._update_title()
 
     def go_to_day(self, day: date) -> None:
+        self._close_popover()
         self._current_day = day
         self.current_view.set_date(day)
         self._sync_mini_calendar()
@@ -487,11 +493,33 @@ class CalendarWindow(Adw.ApplicationWindow):
             self._search_button.set_active(True)
         self._search_view.search(entry.get_text())
 
-    def _on_search_result(self, view, occurrence: Occurrence, source: Gtk.Widget) -> None:
-        """Clicking a result goes to its day, then opens it."""
+    def _on_search_result(self, _view, occurrence: Occurrence, _source: Gtk.Widget) -> None:
+        """Clicking a result leaves search, goes to the day, and opens the event.
+
+        The row that was clicked is deliberately *not* used to anchor the
+        bubble.  Leaving search clears the entry, which re-runs the search
+        with an empty term and empties the results list — so that row is
+        destroyed a moment later, and a popover parented to it took the whole
+        application down with a segfault when it tried to pop up.
+
+        The bubble is anchored to the event's own chip in the view we land on
+        instead, which is also where the user is now looking.  That chip does
+        not exist until the view has been rebuilt, hence the idle callback.
+        """
         self.stop_search()
         self.go_to_day(occurrence.first_day)
-        self._on_event_activated(view, occurrence, source)
+        GLib.idle_add(self._open_from_search, occurrence)
+
+    def _open_from_search(self, occurrence: Occurrence) -> bool:
+        view = self._views.get(self._stack.get_visible_child_name())
+        if view is None:
+            return GLib.SOURCE_REMOVE
+        # Falls back to the view itself when the event is not drawn — hidden
+        # behind a "+N more", say.  Better a bubble in the middle of the
+        # window than a click that appears to do nothing.
+        self._on_event_activated(view, occurrence,
+                                 find_event_widget(view, occurrence) or view)
+        return GLib.SOURCE_REMOVE
 
     # ------------------------------------------------------------------
     # Events
@@ -543,6 +571,14 @@ class CalendarWindow(Adw.ApplicationWindow):
         calendar = self.sync.storage.get_calendar(occurrence.calendar_id)
         if calendar is None:
             return
+
+        # A widget that has been taken out of the window is on its way to
+        # being finalised, and parenting a popover to it segfaults the moment
+        # the popover tries to appear.  Anchor to the view instead.
+        if source is None or source.get_root() is None:
+            source = self._views.get(self._stack.get_visible_child_name())
+            if source is None:
+                return
 
         self._close_popover()
 

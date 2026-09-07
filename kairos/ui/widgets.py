@@ -457,6 +457,36 @@ def empty_state(title: str, subtitle: str = "", icon: str = "x-office-calendar-s
     return status
 
 
+def mark_event_widget(widget: Gtk.Widget, occurrence) -> None:
+    """Record which occurrence a chip stands for.
+
+    Views throw their widgets away and rebuild them on every redraw, so a
+    chip cannot be held on to across one.  Tagging it with the event's
+    identity lets :func:`find_event_widget` pick out the new chip for the
+    same occurrence after the view has been rebuilt.
+    """
+    widget.kairos_occurrence = (occurrence.uid, occurrence.start)
+
+
+def find_event_widget(root: Gtk.Widget, occurrence) -> Gtk.Widget | None:
+    """The chip below ``root`` standing for ``occurrence``, if it is drawn.
+
+    Returns ``None`` when the event is not on screen — it may be hidden
+    behind a "+N more", or on a day the current view does not cover.
+    """
+    wanted = (occurrence.uid, occurrence.start)
+    pending = [root]
+    while pending:
+        widget = pending.pop()
+        if getattr(widget, "kairos_occurrence", None) == wanted:
+            return widget
+        child = widget.get_first_child()
+        while child is not None:
+            pending.append(child)
+            child = child.get_next_sibling()
+    return None
+
+
 def clear_children(widget: Gtk.Widget) -> None:
     """Remove every child of a container widget.
 

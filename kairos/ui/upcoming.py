@@ -22,7 +22,7 @@ from gi.repository import GObject, Gtk  # noqa: E402
 from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, local_timezone, start_of_day
-from kairos.ui.widgets import clear_children, style_widget
+from kairos.ui.widgets import clear_children, mark_event_widget, style_widget
 
 
 class UpcomingList(Gtk.Box):
@@ -141,6 +141,7 @@ class UpcomingList(Gtk.Box):
         )
         button.connect("clicked",
                        lambda b: self.emit("event-activated", occurrence, b))
+        mark_event_widget(button, occurrence)
         return button
 
     @staticmethod

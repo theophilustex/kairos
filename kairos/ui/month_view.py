@@ -28,7 +28,8 @@ from gi.repository import GObject, Gtk  # noqa: E402
 from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, start_of_day
-from kairos.ui.widgets import clear_children, on_click, style_widget, tinted_button_css
+from kairos.ui.widgets import (clear_children, mark_event_widget, on_click,
+                               style_widget, tinted_button_css)
 
 #: A month grid is always six weeks tall.  Some months only need five, but a
 #: grid that changes height as you page through the year is worse than one
@@ -127,6 +128,7 @@ class DayCell(Gtk.Box):
         button.set_tooltip_text(f"{occurrence.summary}\n{formatting.format_time_range(occurrence)}")
         button.connect("clicked",
                        lambda b: self.view.emit("event-activated", occurrence, b))
+        mark_event_widget(button, occurrence)
         return button
 
     # -- input ------------------------------------------------------------
