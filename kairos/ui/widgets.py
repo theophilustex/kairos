@@ -17,7 +17,7 @@ from gi.repository import Adw, Gdk, GLib, GObject, Gtk  # noqa: E402
 
 from kairos import formatting
 from kairos.config import settings
-from kairos.models import local_timezone
+from kairos.models import Occurrence, local_timezone
 from kairos.theming import parse_colour, readable_text_colour
 
 log = logging.getLogger(__name__)
@@ -455,6 +455,36 @@ def empty_state(title: str, subtitle: str = "", icon: str = "x-office-calendar-s
     status.add_css_class("kairos-empty-state")
     status.set_vexpand(True)
     return status
+
+
+def assign_banner_rows(
+    banners: list[tuple[Occurrence, int, int]],
+) -> list[tuple[Occurrence, int, int, int]]:
+    """Stack all-day banners so that no two overlapping ones share a row.
+
+    Takes ``(occurrence, first_column, last_column)`` — column numbers being
+    days across the strip — and returns the same with a row number added.
+
+    Widest bars are placed first and each takes the lowest row that is free
+    for *every* column it covers.  Both matter: a bar has one row for its
+    whole span rather than stepping down mid-week, and a week-long banner
+    ends up on the top line instead of below the short events it passes.
+    """
+    ordered = sorted(banners, key=lambda b: (b[1] - b[2], b[1], b[0].summary))
+    placed: list[tuple[Occurrence, int, int, int]] = []
+    occupied: list[set[int]] = []
+
+    for occurrence, first, last in ordered:
+        columns = set(range(first, last + 1))
+        for row, taken in enumerate(occupied):
+            if not taken & columns:
+                taken |= columns
+                break
+        else:
+            row = len(occupied)
+            occupied.append(set(columns))
+        placed.append((occurrence, first, last, row))
+    return placed
 
 
 def mark_event_widget(widget: Gtk.Widget, occurrence) -> None:

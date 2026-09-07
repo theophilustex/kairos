@@ -24,8 +24,10 @@ from kairos.config import settings  # noqa: E402
 from kairos.models import Event, Occurrence, local_timezone, start_of_day  # noqa: E402
 from kairos.storage import Storage  # noqa: E402
 from kairos.sync import SyncManager  # noqa: E402
+from kairos.ui import month_view  # noqa: E402
+from kairos.ui.widgets import assign_banner_rows  # noqa: E402
 from kairos.ui.week_view import (MAX_OVERLAP_COLUMNS, ROWS_PER_DAY,  # noqa: E402
-                                 WeekView, assign_banner_rows, assign_columns,
+                                 WeekView, assign_columns,
                                  row_for)
 
 
@@ -368,3 +370,97 @@ class Headings(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MonthBanners(unittest.TestCase):
+    """Multi-day bars across a row of month cells.
+
+    The month grid draws each day in its own cell, so a bar is necessarily
+    made of pieces. These check the pieces line up: same line number in every
+    cell it crosses, labelled once at the front, and squared where it runs on
+    into the next day.
+    """
+
+    def setUp(self):
+        settings.set("first_day_of_week", "monday")
+        self.monday = date(2026, 8, 31)
+        self.days = [self.monday + timedelta(days=n) for n in range(7)]
+
+    def banner(self, summary, first_offset, days):
+        start = start_of_day(self.monday + timedelta(days=first_offset))
+        event = Event.new("cal", start, start + timedelta(days=days), summary,
+                          all_day=True)
+        return Occurrence(event=event, start=start,
+                          end=start + timedelta(days=days))
+
+    def by_day(self, *occurrences):
+        buckets = {day: [] for day in self.days}
+        for occurrence in occurrences:
+            for day in self.days:
+                if occurrence.first_day <= day <= occurrence.last_day:
+                    buckets[day].append(occurrence)
+        return buckets
+
+    def lines(self, *occurrences):
+        return month_view.banner_lines(self.by_day(*occurrences), self.days)
+
+    def test_a_bar_keeps_one_line_across_the_week(self):
+        lines = self.lines(self.banner("Trip", 2, 3))
+        placed = {column: line for column, cell in enumerate(lines)
+                  for line in cell}
+        self.assertEqual(placed, {2: 0, 3: 0, 4: 0})
+
+    def test_only_the_first_day_is_labelled(self):
+        lines = self.lines(self.banner("Trip", 2, 3))
+        labels = [cell[0][3] for cell in lines if 0 in cell]
+        self.assertEqual(labels, [True, False, False])
+
+    def test_only_the_first_day_has_a_rounded_left_edge(self):
+        lines = self.lines(self.banner("Trip", 2, 3))
+        starts = [cell[0][1] for cell in lines if 0 in cell]
+        self.assertEqual(starts, [True, False, False])
+
+    def test_the_last_day_is_marked_as_the_end(self):
+        lines = self.lines(self.banner("Trip", 2, 3))
+        ends = [cell[0][2] for cell in lines if 0 in cell]
+        self.assertEqual(ends, [False, False, True])
+
+    def test_a_one_day_banner_both_starts_and_ends(self):
+        lines = self.lines(self.banner("Birthday", 6, 1))
+        _, starts, ends, label = lines[6][0]
+        self.assertTrue(starts)
+        self.assertTrue(ends)
+        self.assertTrue(label)
+
+    def test_a_shorter_bar_goes_below_a_longer_one(self):
+        lines = self.lines(self.banner("Trip", 2, 3), self.banner("Closed", 2, 1))
+        by_summary = {entry[0].summary: line
+                      for line, entry in lines[2].items()}
+        self.assertEqual(by_summary["Trip"], 0)
+        self.assertEqual(by_summary["Closed"], 1)
+
+    def test_a_bar_is_clipped_to_the_week(self):
+        """It cannot run past the end of a row of cells."""
+        lines = self.lines(self.banner("Long", 5, 9))
+        columns = [column for column, cell in enumerate(lines) if cell]
+        self.assertEqual(columns, [5, 6])
+
+    def test_a_bar_starting_before_the_week_is_clipped(self):
+        lines = self.lines(self.banner("Long", -3, 6))
+        columns = [column for column, cell in enumerate(lines) if cell]
+        self.assertEqual(columns, [0, 1, 2])
+        self.assertFalse(lines[0][0][1],
+                         "a continuation must not get a rounded left edge")
+        self.assertTrue(lines[0][0][3],
+                        "a continuation needs naming again in its own row")
+
+    def test_days_with_no_bar_get_nothing(self):
+        lines = self.lines(self.banner("Trip", 2, 1))
+        self.assertEqual(lines[0], {})
+        self.assertEqual(lines[6], {})
+
+    def test_squared_edges_only_where_the_bar_continues(self):
+        middle = month_view._squared(starts=False, ends=False)
+        self.assertIn("border-radius: 0 0 0 0", middle)
+        whole = month_view._squared(starts=True, ends=True)
+        self.assertIn(month_view.CHIP_RADIUS, whole)

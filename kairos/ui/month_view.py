@@ -28,13 +28,70 @@ from gi.repository import GObject, Gtk  # noqa: E402
 from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, start_of_day
-from kairos.ui.widgets import (clear_children, mark_event_widget, on_click,
+from kairos.ui.widgets import (assign_banner_rows, clear_children,
+                               mark_event_widget, on_click,
                                style_widget, tinted_button_css)
 
 #: A month grid is always six weeks tall.  Some months only need five, but a
 #: grid that changes height as you page through the year is worse than one
 #: with a spare row.
 WEEKS_SHOWN = 6
+
+#: How round a chip's corners are.  Matches ``.kairos-event-chip`` in the
+#: stylesheet; the edges of a bar that continue into the next day are squared
+#: off to this instead, so the pieces meet flush.
+CHIP_RADIUS = "5px"
+
+
+def _squared(starts: bool, ends: bool) -> str:
+    """Corner radii for one piece of a multi-day bar."""
+    left = CHIP_RADIUS if starts else "0"
+    right = CHIP_RADIUS if ends else "0"
+    return (f" border-radius: {left} {right} {right} {left};"
+            f" margin-left: {'1px' if starts else '0'};"
+            f" margin-right: {'1px' if ends else '0'};")
+
+
+def is_banner(occurrence: Occurrence) -> bool:
+    """Whether an occurrence is drawn as a bar rather than a dot and a time."""
+    return occurrence.all_day or occurrence.first_day != occurrence.last_day
+
+
+def banner_lines(by_day: dict, days: list[date]) -> list[dict]:
+    """Work out where each multi-day bar sits across one week of cells.
+
+    Returns one dict per day, mapping a line number to
+    ``(occurrence, starts, ends, label)``.  A bar keeps the same line for the
+    whole week, which is what stops it stepping up and down between cells.
+
+    ``starts`` and ``ends`` mark the event's *real* first and last day, and
+    decide which corners stay rounded.  ``label`` is separate and marks the
+    first cell of this row: an event running across two week rows is named
+    again at the start of the second, because the name in the row above is
+    nowhere near it — but its left edge is still square, because it continues.
+    """
+    spans: dict = {}
+    for day in days:
+        for occurrence in by_day.get(day, []):
+            key = (occurrence.uid, occurrence.start)
+            if not is_banner(occurrence) or key in spans:
+                continue
+            spans[key] = (
+                occurrence,
+                max(0, (occurrence.first_day - days[0]).days),
+                min(len(days) - 1, (occurrence.last_day - days[0]).days),
+            )
+
+    per_day: list[dict] = [{} for _ in days]
+    for occurrence, first, last, line in assign_banner_rows(list(spans.values())):
+        for column in range(first, last + 1):
+            per_day[column][line] = (
+                occurrence,
+                occurrence.first_day == days[column],
+                occurrence.last_day == days[column],
+                column == first,
+            )
+    return per_day
 
 
 class DayCell(Gtk.Box):
@@ -71,14 +128,44 @@ class DayCell(Gtk.Box):
             else:
                 self.remove_css_class(name)
 
-    def set_occurrences(self, occurrences: list[Occurrence], colours: dict[str, str]) -> None:
+    def set_occurrences(self, banners: dict, timed: list[Occurrence],
+                        colours: dict[str, str]) -> None:
+        """Fill the cell in.
+
+        ``banners`` maps a *line number* to ``(occurrence, starts, ends)`` for
+        the multi-day bars crossing this day.  The line number is assigned
+        across the whole week, so a bar sits on the same line in every cell it
+        passes through and the pieces read as one bar rather than a staircase.
+        Lines this day has no bar on are held open by a blank placeholder,
+        which is what keeps the ones below it lined up too.
+        """
         clear_children(self._chips)
         limit = settings.get_int("max_chips_per_day")
 
-        for occurrence in occurrences[:limit]:
-            self._chips.append(self._make_chip(occurrence, colours))
+        lines = max(banners) + 1 if banners else 0
+        rows_used = 0
+        events_shown = 0
+        for line in range(lines):
+            if rows_used >= limit:
+                break
+            entry = banners.get(line)
+            if entry is None:
+                self._chips.append(self._spacer())
+            else:
+                occurrence, starts, ends, label = entry
+                self._chips.append(self._make_chip(
+                    occurrence, colours, starts=starts, ends=ends, label=label))
+                events_shown += 1
+            rows_used += 1
 
-        hidden = len(occurrences) - limit
+        for occurrence in timed:
+            if rows_used >= limit:
+                break
+            self._chips.append(self._make_chip(occurrence, colours))
+            rows_used += 1
+            events_shown += 1
+
+        hidden = len(banners) + len(timed) - events_shown
         if hidden > 0:
             more = Gtk.Button(label=f"+{hidden} more")
             more.add_css_class("kairos-chip-more")
@@ -87,11 +174,30 @@ class DayCell(Gtk.Box):
             more.connect("clicked", lambda *_: self.view.emit("day-activated", self.day))
             self._chips.append(more)
 
-    def _make_chip(self, occurrence: Occurrence, colours: dict[str, str]) -> Gtk.Widget:
+    def _spacer(self) -> Gtk.Widget:
+        """An invisible chip, holding a banner line open on a day it skips."""
+        spacer = Gtk.Button()
+        spacer.add_css_class("kairos-event-chip")
+        spacer.add_css_class("flat")
+        spacer.set_child(Gtk.Label(label=" ", xalign=0))
+        spacer.set_opacity(0)
+        spacer.set_can_target(False)
+        spacer.set_can_focus(False)
+        return spacer
+
+    def _make_chip(self, occurrence: Occurrence, colours: dict[str, str],
+                   *, starts: bool = True, ends: bool = True,
+                   label: bool = True) -> Gtk.Widget:
         """One event, drawn as a coloured pill or as a dot plus a time.
 
         Timed events get the lighter dot treatment so that all-day banners,
         which really are all-day, are the things that stand out.
+
+        ``starts`` and ``ends`` say whether this is the event's real first or
+        last day, and square off the edges that continue into the next cell so
+        the pieces meet flush. ``label`` says whether to write the title here:
+        once per row rather than once per day, so a week-long event reads as
+        one bar with a name at the front instead of seven repetitions of it.
         """
         colour = colours.get(occurrence.calendar_id, "#3584e4")
         button = Gtk.Button()
@@ -101,10 +207,10 @@ class DayCell(Gtk.Box):
 
         is_banner = occurrence.all_day or occurrence.first_day != occurrence.last_day
         if is_banner:
-            label = Gtk.Label(label=occurrence.summary, xalign=0)
-            label.set_ellipsize(3)  # Pango.EllipsizeMode.END
-            button.set_child(label)
-            style_widget(button, tinted_button_css(colour))
+            text = Gtk.Label(label=occurrence.summary if label else "", xalign=0)
+            text.set_ellipsize(3)  # Pango.EllipsizeMode.END
+            button.set_child(text)
+            style_widget(button, tinted_button_css(colour) + _squared(starts, ends))
         else:
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
             dot = Gtk.Box()
@@ -293,10 +399,20 @@ class MonthView(Gtk.Box):
 
         colours = {c.id: c.colour for c in self.sync.calendars()}
         today = date.today()
-        for day, cell in self._cells.items():
-            cell.set_flags(
-                in_month=day.month == self._anchor.month,
-                is_today=day == today,
-                is_selected=day == self._selected,
-            )
-            cell.set_occurrences(by_day.get(day, []), colours)
+        for week in range(WEEKS_SHOWN):
+            days = [first_day + timedelta(days=week * 7 + column)
+                    for column in range(7)]
+            # Bars are placed a week at a time, because a week is one row of
+            # cells and a bar cannot continue past the end of one.
+            lines = banner_lines(by_day, days)
+            for column, day in enumerate(days):
+                cell = self._cells.get(day)
+                if cell is None:
+                    continue
+                cell.set_flags(
+                    in_month=day.month == self._anchor.month,
+                    is_today=day == today,
+                    is_selected=day == self._selected,
+                )
+                timed = [o for o in by_day.get(day, []) if not is_banner(o)]
+                cell.set_occurrences(lines[column], timed, colours)

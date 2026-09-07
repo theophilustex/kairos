@@ -25,8 +25,9 @@ from gi.repository import GLib, GObject, Gtk  # noqa: E402
 from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, local_timezone, start_of_day
-from kairos.ui.widgets import (clear_children, mark_event_widget, on_click,
-                               style_widget, tinted_button_css)
+from kairos.ui.widgets import (assign_banner_rows, clear_children,
+                               mark_event_widget, on_click, style_widget,
+                               tinted_button_css)
 
 #: Rows per hour.  Four gives fifteen-minute resolution, which is as fine as
 #: anyone schedules and keeps the widget count sensible (96 rows per day).
@@ -45,36 +46,6 @@ MAX_OVERLAP_COLUMNS = 4
 #: second line (the time range) only appears when there is room to draw it.
 MIN_BLOCK_PIXELS = 22
 TIME_LABEL_PIXELS = 36
-
-
-def assign_banner_rows(
-    banners: list[tuple[Occurrence, int, int]],
-) -> list[tuple[Occurrence, int, int, int]]:
-    """Stack all-day banners so that no two overlapping ones share a row.
-
-    Takes ``(occurrence, first_column, last_column)`` — column numbers being
-    days across the strip — and returns the same with a row number added.
-
-    Widest bars are placed first and each takes the lowest row that is free
-    for *every* column it covers.  Both matter: a bar has one row for its
-    whole span rather than stepping down mid-week, and a week-long banner
-    ends up on the top line instead of below the short events it passes.
-    """
-    ordered = sorted(banners, key=lambda b: (b[1] - b[2], b[1], b[0].summary))
-    placed: list[tuple[Occurrence, int, int, int]] = []
-    occupied: list[set[int]] = []
-
-    for occurrence, first, last in ordered:
-        columns = set(range(first, last + 1))
-        for row, taken in enumerate(occupied):
-            if not taken & columns:
-                taken |= columns
-                break
-        else:
-            row = len(occupied)
-            occupied.append(set(columns))
-        placed.append((occurrence, first, last, row))
-    return placed
 
 
 def assign_columns(occurrences: list[Occurrence]) -> list[tuple[Occurrence, int, int]]:
