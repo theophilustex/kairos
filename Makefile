@@ -9,7 +9,8 @@ APP_ID      = org.kairos.Calendar
 VERSION     = $(shell sed -n 's/^VERSION = "\(.*\)"/\1/p' kairos/__init__.py)
 ICON_SIZES  = 16 24 32 48 64 128 256 512
 
-.PHONY: help run test lint install uninstall appimage clean check-deps icons
+.PHONY: help run test lint install uninstall appimage clean check-deps icons \
+        screenshots
 
 help:
 	@echo "Kairos $(VERSION)"
@@ -21,6 +22,7 @@ help:
 	@echo "  make uninstall   remove it again"
 	@echo "  make appimage    build a self-contained AppImage into build/"
 	@echo "  make icons SRC=x.png   regenerate the icon set from an image"
+	@echo "  make screenshots recapture the ones used in the documentation"
 	@echo "  make check-deps  report which dependencies are missing"
 	@echo "  make clean       delete build artefacts and __pycache__"
 
@@ -31,7 +33,7 @@ test:
 	$(PYTHON) -m unittest discover -s tests -t . -v
 
 lint:
-	@$(PYTHON) -m pyflakes kairos tests \
+	@$(PYTHON) -m pyflakes kairos tests packaging/*.py \
 		|| echo "(install pyflakes for this: pip install pyflakes)"
 
 check-deps:
@@ -87,6 +89,9 @@ uninstall:
 icons:
 	@test -n "$(SRC)" || { echo "Usage: make icons SRC=path/to/icon.png"; exit 1; }
 	./packaging/make-icons.py "$(SRC)"
+
+screenshots:
+	./packaging/make-screenshots.py
 
 appimage:
 	./packaging/build-appimage.sh

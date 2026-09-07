@@ -17,6 +17,8 @@
 
 A sidebar on the left, the calendar on the right.
 
+<img src="images/month-view.png" alt="The Kairos window: sidebar on the left with a month, “Up next” and the calendar list; the month grid on the right">
+
 The header bar has, left to right: **+** for a new event, **‹ Today ›** for
 moving about, the current period, a sync button, the view switcher, a search
 button, and the main menu.
@@ -58,6 +60,9 @@ you left open.
 Press <kbd>Ctrl</kbd>+<kbd>F</kbd>, or the magnifying glass in the header, or
 simply start typing in the calendar window.
 
+<img src="images/search.png" alt="Search results replacing the calendar, each row showing a calendar colour, date, title, time and place">
+
+
 Results replace the calendar while you search, each showing the calendar's
 colour, the date, the title, and the time, place and calendar underneath.
 Click one to jump to its day and open it. <kbd>Escape</kbd> closes the search
@@ -84,8 +89,13 @@ overlapping ones are placed side by side automatically. A line across the grid
 shows the current time. All-day events sit in a strip above it. The view opens
 scrolled to about an hour before now rather than at midnight.
 
+<img src="images/week-view.png" alt="The week view: a timed grid with overlapping events side by side and all-day events in a strip above">
+
 **Agenda** — a plain list of what is coming, day by day, skipping empty days.
 The most useful view in a narrow window.
+
+<img src="images/agenda-view.png" alt="The agenda view: events listed day by day under date headings">
+
 
 Click a day heading in the week view, or "+N more" in the month view, to jump
 to that day.
@@ -100,6 +110,8 @@ puts the event where you clicked.
 
 **To open one**: click it. A bubble appears with the details and **Edit** and
 **Delete**.
+
+<img src="images/event-editor.png" alt="The event editor: title, location, calendar, all-day switch, start and end, repeat rule and reminders">
 
 The editor has:
 

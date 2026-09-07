@@ -1,8 +1,19 @@
+<div align="center">
+
+<img src="../data/icons/hicolor/256x256/apps/org.kairos.Calendar.png" width="96" alt="Kairos">
+
 # Kairos documentation
+
+</div>
 
 Kairos is a lightweight, customisable calendar for Linux desktops, written in
 Python with GTK 4 and libadwaita. It reads and writes CalDAV/WebDAV calendars,
 works offline, and reminds you about things in a way that is hard to ignore.
+
+<img src="images/month-view.png" alt="The month view">
+
+*The month view. The sidebar carries a month, an “Up next” list and your
+calendars; everything is drawn from a local cache, so it is instant.*
 
 ## If you are using Kairos
 

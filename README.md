@@ -1,8 +1,28 @@
+<div align="center">
+
+<img src="data/icons/hicolor/256x256/apps/org.kairos.Calendar.png" width="128" alt="Kairos">
+
 # Kairos
 
-A lightweight, customisable calendar for Linux, written in Python with GTK 4
-and libadwaita. It talks to any CalDAV/WebDAV server — Nextcloud, Radicale,
-Fastmail, Posteo, your own box — and reads and writes your events there.
+**A lightweight, customisable calendar for Linux.**
+
+[![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-663366?style=flat-square)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![GTK 4 · libadwaita](https://img.shields.io/badge/GTK%204-libadwaita-4a86cf?style=flat-square&logo=gnome&logoColor=white)](https://gtk.org/)
+[![CalDAV](https://img.shields.io/badge/CalDAV-read%20%26%20write-9141ac?style=flat-square)](docs/calendars.md)
+[![Tests](https://img.shields.io/badge/tests-307%20passing-2ec27e?style=flat-square)](docs/contributing.md)
+[![AppImage](https://img.shields.io/badge/AppImage-available-e66100?style=flat-square&logo=linux&logoColor=white)](docs/installation.md)
+[![No telemetry](https://img.shields.io/badge/telemetry-none-c01c28?style=flat-square)](docs/security.md)
+
+<img src="docs/images/month-view.png" width="820" alt="The month view, with events across several colour-coded calendars and an “Up next” sidebar">
+
+</div>
+
+---
+
+Written in Python with GTK 4 and libadwaita. It talks to any CalDAV/WebDAV
+server — Nextcloud, Radicale, Fastmail, Posteo, your own box — and reads and
+writes your events there.
 
 It is meant to feel like GNOME Calendar, but to be small enough that you can
 read the whole thing in an afternoon and change the bits you disagree with.
@@ -71,6 +91,13 @@ Four views — month, week, day and agenda — switchable with
 details, double-click empty space to create one. <kbd>Ctrl</kbd>+<kbd>F</kbd>
 searches titles, places and notes.
 
+| | |
+|:--:|:--:|
+| <img src="docs/images/week-view.png" alt="The week view"> | <img src="docs/images/agenda-view.png" alt="The agenda view"> |
+| **Week** — real times, overlaps side by side, a line at now | **Agenda** — a plain list, empty days skipped |
+| <img src="docs/images/search.png" alt="Searching"> | <img src="docs/images/event-editor.png" alt="The event editor"> |
+| **Search** — titles, places and notes, upcoming first | **The editor** — repeats and any number of reminders |
+
 The sidebar shows a month, an **Up next** list of what is coming with each
 event's colour and time, and your calendars — each of which can be hidden or
 recoloured. Both lists fold away if you would rather have the space.
@@ -84,6 +111,12 @@ Everything is drawn from a local SQLite cache, so it is instant and works on a
 train. The network happens on a background thread; changes you make offline are
 queued and pushed on the next sync, and a refresh from the server will never
 discard an edit you have not managed to send.
+
+Light or dark, and any accent colour you like:
+
+<img src="docs/images/light-theme.png" width="820" alt="The same week view in the light theme">
+
+More in the **[user guide](docs/user-guide.md)**.
 
 ---
 
@@ -107,7 +140,7 @@ The details, and where to look in the code, are in
 make test
 ```
 
-263 tests, standard-library `unittest`, no framework to install. The CalDAV
+307 tests, standard-library `unittest`, no framework to install. The CalDAV
 suite starts a real [Radicale](https://radicale.org) server on localhost and
 drives the backend against it — create, read back, update in place, delete,
 ETags, a genuine 412 conflict, and the offline queue. It skips cleanly if

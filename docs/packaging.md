@@ -4,6 +4,7 @@
 - [Installing](#installing)
 - [AppImage](#appimage)
 - [The icon](#the-icon)
+- [The screenshots](#the-screenshots)
 - [Desktop integration files](#desktop-integration-files)
 
 ---
@@ -129,6 +130,34 @@ Reinstall or rebuild the AppImage afterwards to pick it up.
 
 ---
 
+## The screenshots
+
+The images in `docs/images/` are generated, not taken by hand:
+
+```sh
+make screenshots
+```
+
+[`packaging/make-screenshots.py`](../packaging/make-screenshots.py) starts
+Kairos against a **throwaway XDG directory** with a made-up week of events, so
+no one's real calendar can end up in a committed PNG, drives the window through
+each view, photographs it with `gnome-screenshot`, and scales the results to
+1400px wide.
+
+Two things it goes out of its way to do, both so the images do not depend on
+when the script happens to run:
+
+- **the demo week is anchored to the Monday of the current week**, so the week
+  view is full whatever day it is, and dates never look stale;
+- **the week view is scrolled explicitly** rather than to the current time,
+  which would otherwise photograph an empty 3am grid overnight.
+
+It needs a running X session plus `wmctrl` and `gnome-screenshot`, and Pillow
+for the downscale. Rerun it after any change to how Kairos looks, so the
+documentation does not drift away from the application.
+
+---
+
 ## Desktop integration files
 
 | File | |
@@ -137,9 +166,10 @@ Reinstall or rebuild the AppImage afterwards to pick it up.
 | `data/org.kairos.Calendar.metainfo.xml` | AppStream metadata for software centres. Validated with `appstreamcli validate`. |
 | `data/icons/hicolor/…` | Eight PNG sizes, 16 to 512. |
 
-The URLs in the metainfo file are placeholders — point them at your own
-repository if you fork Kairos, or `appstreamcli` will warn that they are not
-reachable.
+The metainfo file also carries the screenshots software centres show. Those
+have to be absolute URLs — they point at the images in this repository — so if
+you fork Kairos, change them and the three `<url>` entries to your own
+repository, or `appstreamcli` will warn that they are not reachable.
 
 ---
 

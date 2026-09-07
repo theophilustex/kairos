@@ -12,6 +12,7 @@ skips, so ``make test`` still works on a machine without it::
     pip install radicale
 """
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -23,11 +24,9 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta
 
-try:
-    import radicale  # noqa: F401
-    HAVE_RADICALE = True
-except ImportError:
-    HAVE_RADICALE = False
+# Only ever run as `python -m radicale` in a subprocess below, so this asks
+# whether it is installed rather than importing it for its own sake.
+HAVE_RADICALE = importlib.util.find_spec("radicale") is not None
 
 from kairos.models import CALDAV, Account, Alarm, Event, local_timezone, start_of_day
 

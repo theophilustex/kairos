@@ -32,9 +32,35 @@
 
   <!-- Replace these with your own repository if you fork Kairos; they are
        what software centres link to from the app's page. -->
-  <url type="homepage">https://github.com/kairos-calendar/kairos</url>
-  <url type="bugtracker">https://github.com/kairos-calendar/kairos/issues</url>
-  <url type="vcs-browser">https://github.com/kairos-calendar/kairos</url>
+  <url type="homepage">https://github.com/theophilustex/kairos</url>
+  <url type="bugtracker">https://github.com/theophilustex/kairos/issues</url>
+  <url type="vcs-browser">https://github.com/theophilustex/kairos</url>
+
+  <!-- Software centres fetch these over the network, so they have to be
+       absolute URLs rather than the repository-relative paths the Markdown
+       documentation uses. Regenerate the images with `make screenshots`. -->
+  <screenshots>
+    <screenshot type="default">
+      <caption>The month view</caption>
+      <image>https://raw.githubusercontent.com/theophilustex/kairos/main/docs/images/month-view.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The week view</caption>
+      <image>https://raw.githubusercontent.com/theophilustex/kairos/main/docs/images/week-view.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The agenda view</caption>
+      <image>https://raw.githubusercontent.com/theophilustex/kairos/main/docs/images/agenda-view.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Editing an event</caption>
+      <image>https://raw.githubusercontent.com/theophilustex/kairos/main/docs/images/event-editor.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The light theme</caption>
+      <image>https://raw.githubusercontent.com/theophilustex/kairos/main/docs/images/light-theme.png</image>
+    </screenshot>
+  </screenshots>
 
   <categories>
     <category>Office</category>

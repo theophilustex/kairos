@@ -76,6 +76,11 @@ Defaults are what Kairos uses if the key is absent.
 
 ### Appearance
 
+<img src="images/light-theme.png" alt="The week view in the light theme">
+
+*The light theme. `theme` follows your desktop unless you pin it, and
+`accent_color` tints today, selections and the current-time line.*
+
 | Key | Default | Values | |
 |---|---|---|---|
 | `theme` | `"system"` | `system` / `light` / `dark` | Follow the desktop, or force one. |

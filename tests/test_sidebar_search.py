@@ -147,16 +147,30 @@ class Upcoming(WithCalendars):
         finally:
             settings.set("sidebar_upcoming_days", 30)
 
-    def test_days_are_given_headings(self):
-        self.add("Today thing", hours_ahead=1)
-        widget = UpcomingList(self.manager)
-        headings = []
+    def headings(self, widget):
+        """The day headings the list is showing, in order."""
+        found = []
         child = widget.get_first_child()
         while child is not None:
             if isinstance(child, Gtk.Label):
-                headings.append(child.get_label())
+                found.append(child.get_label())
             child = child.get_next_sibling()
-        self.assertIn("Today", headings)
+        return found
+
+    def test_days_are_given_headings(self):
+        """The heading names the day the event actually falls on.
+
+        Not "Today" unconditionally: an hour from now is tomorrow if the
+        suite runs late in the evening, and this used to fail after 11pm.
+        """
+        event = self.add("A thing", hours_ahead=1)
+        expected = UpcomingList._day_label(event.start.astimezone().date())
+        self.assertEqual(self.headings(UpcomingList(self.manager)), [expected])
+
+    def test_events_on_different_days_get_a_heading_each(self):
+        self.add("Sooner", hours_ahead=1)
+        self.add("Days later", hours_ahead=72)
+        self.assertEqual(len(self.headings(UpcomingList(self.manager))), 2)
 
     def test_an_empty_calendar_says_so(self):
         widget = UpcomingList(self.manager)
