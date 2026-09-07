@@ -32,7 +32,7 @@ python3 -m unittest tests.test_ical -v      # one module
 python3 -m unittest tests.test_ical.AllDayEvents.test_written_as_dates_not_datetimes
 ```
 
-327 tests, all standard-library `unittest`. There is no framework to install
+350 tests, all standard-library `unittest`. There is no framework to install
 and no configuration file.
 
 | Module | |
@@ -47,7 +47,9 @@ and no configuration file.
 | `test_reminder_alert.py` | The alert window and snoozing. |
 | `test_background.py` | The tray protocol and starting at login. |
 | `test_editor.py` | The 12-hour picker and custom reminders. |
-| `test_layout.py` | Overlap packing and date formatting. |
+| `test_layout.py` | Overlap packing, all-day banner spans, date formatting. |
+| `test_search_activation.py` | Opening an event from the search results. |
+| `test_sidebar_search.py` | The foldable sidebar, "Up next", and searching. |
 | `test_gestures.py` | Swiping. |
 
 `tests/__init__.py` redirects the XDG directories into a temporary sandbox and
@@ -60,6 +62,30 @@ genuine 412 conflict, and the offline queue. They skip cleanly if Radicale is
 not installed, so `make test` still works without it. They are worth keeping
 that way: a mocked CalDAV server tests your idea of the protocol rather than
 the protocol.
+
+**Some tests are crash tests.** A popover parented to a widget that is then
+destroyed segfaults GTK rather than raising, so `test_search_activation.py`
+asserts on ordinary behaviour but its real job is that the process is still
+alive afterwards. If one of those starts dying, look for a view rebuild that
+does not take the popover down first.
+
+---
+
+## Continuous integration
+
+Every push and pull request runs [`.github/workflows/ci.yml`](../.github/workflows/ci.yml):
+the suite, `pyflakes`, and validation of the `.desktop` and AppStream files.
+A tag starting with `v` also builds the AppImage and attaches it to the run.
+
+Two things worth knowing if you change it:
+
+- It pins **ubuntu-24.04**, not `ubuntu-latest`. Kairos uses `Adw.Dialog`,
+  which is libadwaita 1.5, and 24.04 is the oldest image that has it.
+- The suite runs under `xvfb`. GTK needs a display to build a widget at all,
+  so without it the tests do not fail, they dump core.
+
+CI installs Radicale, so the CalDAV tests run for real there rather than
+skipping.
 
 ---
 

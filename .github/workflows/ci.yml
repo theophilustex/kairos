@@ -1,0 +1,111 @@
+# Tests, linting and packaging checks for every push and pull request.
+#
+# Runs on ubuntu-24.04 specifically rather than ubuntu-latest: Kairos uses
+# Adw.Dialog and Adw.AlertDialog, which are libadwaita 1.5, and 24.04 is the
+# oldest runner image that ships it. Pinning also means a new runner image
+# cannot change what "passing" means without a commit that says so.
+#
+# PyGObject comes from apt, not pip. It has to be built against the same GTK
+# the tests run with, and the distribution package already is.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GTK and PyGObject
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
+            libgirepository1.0-dev xvfb
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          # radicale so the CalDAV integration tests run for real rather than
+          # skipping; without it 17 tests quietly do nothing.
+          python3 -m pip install -r requirements.txt radicale pyflakes
+
+      - name: Show versions
+        run: |
+          python3 --version
+          python3 -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1'); \
+            from gi.repository import Gtk, Adw; \
+            print(f'GTK {Gtk.get_major_version()}.{Gtk.get_minor_version()}'); \
+            print(f'libadwaita {Adw.get_major_version()}.{Adw.get_minor_version()}')"
+
+      - name: Run the test suite
+        # GTK needs a display even to build a widget, so the whole suite runs
+        # under a virtual X server.
+        run: xvfb-run -a --server-args="-screen 0 1400x900x24" make test
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pyflakes
+        run: python3 -m pip install --upgrade pyflakes
+      - name: Check for unused imports and undefined names
+        # make lint swallows failures so a missing pyflakes does not stop a
+        # developer; CI wants the real exit code.
+        run: python3 -m pyflakes kairos tests packaging/*.py
+
+  data:
+    name: Desktop integration files
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            desktop-file-utils appstream
+      - name: Validate the .desktop file
+        run: desktop-file-validate data/org.kairos.Calendar.desktop
+      - name: Validate the AppStream metadata
+        # The screenshot URLs point at this repository, so a broken one is a
+        # real problem worth failing on.
+        run: appstreamcli validate data/org.kairos.Calendar.metainfo.xml
+
+  appimage:
+    name: AppImage
+    runs-on: ubuntu-24.04
+    # Only on a release tag: the build takes minutes and downloads a toolchain.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, lint, data]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
+            librsvg2-common adwaita-icon-theme python3-pip file desktop-file-utils
+      - name: Build
+        run: make appimage
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: kairos-appimage
+          path: build/*.AppImage
+          if-no-files-found: error
