@@ -23,7 +23,6 @@ from datetime import datetime
 from urllib.parse import quote, unquote, urlparse
 
 import caldav
-import requests
 from caldav.elements import dav, ical as ical_elements
 from caldav.lib import error as caldav_error
 
@@ -115,21 +114,22 @@ class CalDAVBackend(Backend):
         return self._token.access_token
 
     def _bearer_auth(self):
-        """A requests auth object that puts a live token on every request.
+        """A callable that puts a live token on every outgoing request.
 
-        Fetching the token inside the auth callable rather than once when the
+        Fetching the token inside the callable rather than once when the
         client is built is what makes an expiry mid-session a non-event: the
         next request refreshes and carries on, instead of failing until
         Kairos is restarted.
+
+        A plain function rather than a ``requests.auth.AuthBase`` — requests
+        calls anything callable — so this module keeps its single third-party
+        import, and the AppImage has one less thing to bundle.
         """
-        backend = self
+        def sign(request):
+            request.headers["Authorization"] = f"Bearer {self._bearer_token()}"
+            return request
 
-        class BearerAuth(requests.auth.AuthBase):
-            def __call__(self, request):
-                request.headers["Authorization"] = f"Bearer {backend._bearer_token()}"
-                return request
-
-        return BearerAuth()
+        return sign
 
     # ------------------------------------------------------------------
     # Connection
