@@ -467,3 +467,79 @@ class SingleOccurrences(CalDAVServerTestCase):
         after = self.occurrences(self.stored())
         self.assertEqual(len(after), len(before) - 1)
         self.assertNotIn("Moved", [o.summary for o in after])
+
+
+class SplittingASeries(CalDAVServerTestCase):
+    """"This and all following" against a real server.
+
+    The split writes a truncated rule to one resource and a whole new event
+    to another, so this checks the server accepts both and hands them back
+    describing the same set of occurrences.
+    """
+
+    def weekly(self, summary="Standup", rule="FREQ=WEEKLY"):
+        start = (self.now - timedelta(days=7)).replace(hour=9)
+        event = Event.new(self.calendar.id, start, start + timedelta(minutes=30),
+                          summary)
+        event.rrule = rule
+        return self.backend.save_event(self.calendar, event)
+
+    def occurrences(self, events=None, days=60):
+        from kairos import recurrence
+        return recurrence.expand(events if events is not None else self.fetch_all(),
+                                 self.now - timedelta(days=8),
+                                 self.now + timedelta(days=days))
+
+    def fetch_all(self):
+        return self.backend.fetch_events(
+            self.calendar, self.now - timedelta(days=30),
+            self.now + timedelta(days=90))
+
+    def push(self, event, text):
+        from dataclasses import replace as dataclass_replace
+        return self.backend.save_event(self.calendar,
+                                       dataclass_replace(event, raw_ics=text))
+
+    def test_a_truncated_series_is_accepted_and_read_back(self):
+        from kairos import ical
+        saved = self.weekly()
+        before = self.occurrences([saved])
+        self.assertGreaterEqual(len(before), 4)
+
+        split = before[2].recurrence_id
+        self.push(saved, ical.truncate_series(saved.raw_ics, split))
+
+        after = self.occurrences()
+        self.assertEqual(len(after), 2)
+        self.assertTrue(all(o.recurrence_id < split for o in after))
+
+    def test_a_counted_series_splits_without_count_and_until_together(self):
+        """Radicale rejects a rule carrying both."""
+        from kairos import ical
+        saved = self.weekly(rule="FREQ=WEEKLY;COUNT=6")
+        split = self.occurrences([saved])[2].recurrence_id
+        self.push(saved, ical.truncate_series(saved.raw_ics, split, keep_count=2))
+        self.assertEqual(len(self.occurrences()), 2)
+
+    def test_the_two_halves_come_back_as_two_resources(self):
+        from dataclasses import replace as dataclass_replace
+        from kairos import ical
+        from kairos.models import new_uid
+
+        saved = self.weekly("Standup")
+        before = self.occurrences([saved])
+        split_at = before[2]
+
+        self.push(saved, ical.truncate_series(saved.raw_ics,
+                                              split_at.recurrence_id))
+        self.backend.save_event(self.calendar, dataclass_replace(
+            saved, uid=new_uid(), href=None, etag=None, raw_ics="",
+            summary="Team sync", start=split_at.start,
+            end=split_at.start + timedelta(minutes=30)))
+
+        found = self.fetch_all()
+        self.assertEqual(len(found), 2)
+        after = self.occurrences(found)
+        self.assertEqual(len(after), len(before))
+        self.assertEqual({o.summary for o in after[:2]}, {"Standup"})
+        self.assertEqual({o.summary for o in after[2:]}, {"Team sync"})

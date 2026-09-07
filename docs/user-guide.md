@@ -120,13 +120,16 @@ double-click a day in the month view or a time in the week view. Double-clicking
 puts the event where you clicked.
 
 **To open one**: click it. A bubble appears with the details and **Edit** and
-**Delete**.
+**Delete**. If the event has a link — in its **Link** field, its location, or
+anywhere in its notes — there is a **Join** button too, which opens it in your
+browser. Only `http` and `https` links are ever offered; see
+[security](security.md).
 
 <img src="images/event-editor.png" alt="The event editor: title, location, calendar, all-day switch, start and end, repeat rule and reminders">
 
 The editor has:
 
-- **Title**, **Location** and **Notes**
+- **Title**, **Location**, **Link** and **Notes**
 - **Calendar** — which calendar it belongs to. Read-only calendars are not offered.
 - **All day** — hides the times and switches to whole days. The end date shown
   is the last day the event covers, which is what people mean, even though
@@ -141,8 +144,10 @@ The editor has:
 Pressing <kbd>Enter</kbd> in the title field saves.
 
 **Repeating events** ask before an edit or a delete whether you mean *this
-event* or *all events*. Changing one occurrence leaves the rest of the series
-alone; deleting one removes just that date.
+event*, *this and following*, or *all events*. Changing one occurrence leaves
+the rest alone; "this and following" ends the old series at that date and
+starts a new one from it, which is how every other calendar does it and what
+lets the earlier occurrences keep their old details.
 
 **Deleting can be undone.** A bar appears at the bottom of the window with an
 **Undo** button for a few seconds afterwards — for a whole event, and for a

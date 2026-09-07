@@ -288,6 +288,8 @@ class Event:
     description: str = ""
     location: str = ""
     alarms: list[Alarm] = field(default_factory=list)
+    #: iCalendar's URL property — where a meeting is held, usually.
+    url: str = ""
     rrule: str = ""               # e.g. "FREQ=WEEKLY;BYDAY=MO,WE"
     # Bookkeeping for talking to the server.  None means "not on a server yet".
     href: str | None = None       # path of the .ics resource on the server

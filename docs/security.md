@@ -153,6 +153,18 @@ python3 -m unittest tests.test_security -v
 
 ---
 
+## Links in events
+
+The **Join** button opens a URL taken from an event, and an event may have
+been written by anyone who can add an entry to a calendar you subscribe to.
+`security.safe_external_url` therefore accepts only `http` and `https`;
+`file:///`, `javascript:`, `data:` and any scheme another application has
+registered on the desktop are refused, on the way in from the server *and*
+again before anything is launched. A link typed into the editor is held to
+the same rule.
+
+---
+
 ## OAuth accounts
 
 Google is signed in to with the authorization-code flow and PKCE, over a

@@ -39,6 +39,18 @@ from kairos.storage import PENDING_DELETE, PENDING_SAVE, Storage
 log = logging.getLogger(__name__)
 
 
+def _with_count(rule: str, count: int) -> str:
+    """An RRULE limited to ``count`` occurrences.
+
+    UNTIL is dropped along with any existing COUNT: a rule may carry one or
+    the other, never both.
+    """
+    parts = [part for part in rule.split(";")
+             if part and part.split("=")[0].strip().upper() not in ("COUNT", "UNTIL")]
+    parts.append(f"COUNT={count}")
+    return ";".join(parts)
+
+
 class SyncManager(GObject.Object):
     """Owns the cache, the accounts and the background worker.
 
@@ -183,15 +195,24 @@ class SyncManager(GObject.Object):
     # must not go through :meth:`save_event`, which regenerates the whole
     # document from the master and would throw every override away.
 
+    #: What an edit or a delete applies to.
+    THIS_EVENT = "this"
+    THIS_AND_FOLLOWING = "following"
+    ALL_EVENTS = "all"
+
     def save_occurrence(self, occurrence: Occurrence, edited: Event, *,
-                        whole_series: bool) -> None:
-        """Apply an edit to one occurrence, or to the series it belongs to."""
+                        scope: str) -> None:
+        """Apply an edit to one occurrence, the rest of the series, or all."""
         original = occurrence.event
-        if whole_series or not self._is_one_of_a_series(occurrence):
+        if scope == self.ALL_EVENTS or not self._is_one_of_a_series(occurrence):
             self.save_event(edited)
             return
 
         from kairos import ical
+        if scope == self.THIS_AND_FOLLOWING:
+            self._split_series(occurrence, edited)
+            return
+
         try:
             text = ical.override_occurrence(
                 original.raw_ics or ical.to_ical_text(original),
@@ -204,15 +225,22 @@ class SyncManager(GObject.Object):
             return
         self._save_series_text(original, text)
 
-    def delete_occurrence(self, occurrence: Occurrence, *,
-                          whole_series: bool) -> None:
-        """Remove one occurrence, or the whole series."""
+    def delete_occurrence(self, occurrence: Occurrence, *, scope: str) -> None:
+        """Remove one occurrence, the rest of the series, or all of it."""
         original = occurrence.event
-        if whole_series or not self._is_one_of_a_series(occurrence):
+        if scope == self.ALL_EVENTS or not self._is_one_of_a_series(occurrence):
             self.delete_event(original)
             return
 
         from kairos import ical
+        if scope == self.THIS_AND_FOLLOWING:
+            # Deleting the rest is the same as ending the series here, with
+            # no new event to carry the far side.
+            succeeded, _ = self._truncate(occurrence)
+            if not succeeded:
+                self.delete_event(original)
+            return
+
         try:
             text = ical.exclude_occurrence(
                 original.raw_ics or ical.to_ical_text(original),
@@ -223,6 +251,93 @@ class SyncManager(GObject.Object):
             self.delete_event(original)
             return
         self._save_series_text(original, text)
+
+    def _truncate(self, occurrence: Occurrence) -> tuple[bool, int | None]:
+        """End the series just before ``occurrence``.
+
+        Returns ``(succeeded, kept)``. ``kept`` is how many occurrences the
+        truncated series holds when the rule is limited by COUNT, and
+        ``None`` when it is not — the two are different answers, and running
+        them together once meant an ordinary weekly series was truncated and
+        then deleted outright.
+        """
+        from kairos import ical, recurrence
+        original = occurrence.event
+        text = original.raw_ics or ical.to_ical_text(original)
+
+        keep = None
+        total = recurrence.counted_occurrences(original)
+        if total is not None:
+            # COUNT and UNTIL may not both appear, so a counted series is
+            # divided by count rather than ended by date.
+            keep = recurrence.occurrences_before(original,
+                                                 occurrence.recurrence_id)
+        try:
+            truncated = ical.truncate_series(text, occurrence.recurrence_id,
+                                             keep_count=keep)
+        except ical.ParseError as exc:
+            log.warning("cannot split %s (%s)", original.uid, exc)
+            return False, None
+
+        if keep == 0 or occurrence.recurrence_id <= original.start:
+            # Nothing is left on this side: the split is at the very first
+            # occurrence, so "this and following" means the whole series.
+            self.delete_event(original)
+            return True, 0
+
+        self._save_series_text(original, truncated)
+        return True, keep
+
+    def _split_series(self, occurrence: Occurrence, edited: Event) -> None:
+        """End the series before this occurrence and start a new one here.
+
+        The far side is a separate event with its own UID, which is what
+        every other client does and what makes it a resource the server can
+        hold independently.
+        """
+        from kairos import recurrence
+        from kairos.models import new_uid
+
+        original = occurrence.event
+        total = recurrence.counted_occurrences(original)
+        succeeded, kept = self._truncate(occurrence)
+        if not succeeded:
+            log.warning("could not split %s; changing the whole series",
+                        original.uid)
+            self.save_event(edited)
+            return
+        if kept == 0:
+            # The whole series moved; save the edit as the series itself.
+            self.save_event(replace(edited, raw_ics=""))
+            return
+
+        remaining = None
+        if total is not None and kept is not None:
+            remaining = max(1, total - kept)
+
+        # The new series begins at the occurrence that was split at, not at
+        # the old series' start — and carries whatever the user moved the
+        # times by in the editor, which is the difference between the edit
+        # and the master it was opened on.
+        shift = edited.start - original.start
+        start = occurrence.start + shift
+        end = start + (edited.end - edited.start)
+
+        rule = edited.rrule or original.rrule
+        if remaining is not None:
+            rule = _with_count(rule, remaining)
+
+        self.save_event(replace(
+            edited,
+            uid=new_uid(),
+            href=None,
+            etag=None,
+            sequence=0,
+            raw_ics="",
+            start=start,
+            end=end,
+            rrule=rule,
+        ))
 
     def restore_event(self, event: Event) -> None:
         """Put back an event, or a series, exactly as it was before a delete.

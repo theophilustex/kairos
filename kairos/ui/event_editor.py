@@ -27,6 +27,7 @@ from kairos.ical import REPEAT_PRESETS
 from kairos.models import (
     Alarm, Calendar, Event, describe_offset, local_timezone, to_local,
 )
+from kairos.security import find_url
 from kairos.ui.widgets import DateTimeRow, colour_swatch, describe
 
 
@@ -128,6 +129,10 @@ class EventEditor(Adw.Dialog):
         self._location_row = Adw.EntryRow(title="Location")
         self._location_row.set_text(event.location if event else "")
         group.add(self._location_row)
+
+        self._url_row = Adw.EntryRow(title="Link")
+        self._url_row.set_text(event.url if event else "")
+        group.add(self._url_row)
 
         self._calendar_row = Adw.ComboRow(title="Calendar")
         names = Gtk.StringList()
@@ -451,6 +456,7 @@ class EventEditor(Adw.Dialog):
                 calendar_id=calendar.id,
                 summary=title,
                 location=self._location_row.get_text().strip(),
+                url=self._clean_url(),
                 description=self._notes_text(),
                 start=start,
                 end=end,
@@ -464,10 +470,19 @@ class EventEditor(Adw.Dialog):
 
         event = Event.new(calendar.id, start, end, summary=title, all_day=all_day)
         event.location = self._location_row.get_text().strip()
+        event.url = self._clean_url()
         event.description = self._notes_text()
         event.rrule = rrule
         event.alarms = self._collect_alarms()
         return event
+
+    def _clean_url(self) -> str:
+        """What was typed in the Link row, if it is safe to open later.
+
+        Anything that is not http or https is dropped rather than stored:
+        the detail bubble hands this straight to the desktop's browser.
+        """
+        return find_url(self._url_row.get_text().strip()) or ""
 
     def _on_save(self, _button) -> None:
         event = self.build_event()

@@ -562,24 +562,26 @@ class CalendarWindow(Adw.ApplicationWindow):
         end — having already made the change — is the wrong moment to find
         out you were editing the whole series.
         """
-        def open_editor(*, whole_series: bool) -> None:
+        def open_editor(*, scope: str) -> None:
             editor = EventEditor(self.sync.writable_calendars(),
                                  event=occurrence.event)
             editor.connect("saved", lambda _e, event: self.sync.save_occurrence(
-                occurrence, event, whole_series=whole_series))
+                occurrence, event, scope=scope))
             editor.present(self)
 
         ask_edit_scope(self, occurrence, open_editor)
 
     def _on_delete_requested(self, _popover, occurrence: Occurrence) -> None:
-        def delete(*, whole_series: bool) -> None:
-            # Snapshot before the delete: for a single occurrence the change
-            # is an EXDATE inside the series' iCalendar, so putting it back
-            # means restoring that document, not recreating an event.
+        def delete(*, scope: str) -> None:
+            # Snapshot before the delete: for anything but "all events" the
+            # change is inside the series' iCalendar, so putting it back means
+            # restoring that document rather than recreating an event.
             before = occurrence.event
-            self.sync.delete_occurrence(occurrence, whole_series=whole_series)
-            self._offer_undo(
-                "Event deleted" if whole_series else "Occurrence deleted", before)
+            self.sync.delete_occurrence(occurrence, scope=scope)
+            self._offer_undo({
+                self.sync.ALL_EVENTS: "Event deleted",
+                self.sync.THIS_AND_FOLLOWING: "Later occurrences deleted",
+            }.get(scope, "Occurrence deleted"), before)
 
         confirm_delete(self, occurrence, delete)
 

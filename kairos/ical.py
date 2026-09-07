@@ -29,7 +29,7 @@ import icalendar
 
 from kairos import APP_NAME, VERSION
 from kairos.models import Alarm, Event, local_timezone, new_uid
-from kairos.security import sanitise_text
+from kairos.security import find_url as security_find_url, sanitise_text
 
 log = logging.getLogger(__name__)
 
@@ -166,6 +166,9 @@ def parse_event(component, calendar_id: str, *, href: str | None = None,
         description=sanitise_text(str(component.get("DESCRIPTION", ""))),
         location=sanitise_text(str(component.get("LOCATION", "")), max_length=500),
         alarms=_read_alarms(component, start, end),
+        # Only http(s) survives: this is launched in a browser, and the
+        # value came from whoever could write to the calendar.
+        url=security_find_url(str(component.get("URL", ""))) or "",
         rrule=rrule_text,
         href=href,
         etag=etag,
@@ -223,6 +226,9 @@ def build_component(event: Event) -> icalendar.Event:
         component.add("DESCRIPTION", event.description)
     if event.location:
         component.add("LOCATION", event.location)
+
+    if event.url:
+        component.add("URL", event.url)
     if event.rrule:
         # A rule we cannot re-serialise came from a server that sent us
         # something odd.  Dropping the repeat is much better than refusing to
@@ -370,6 +376,79 @@ def override_occurrence(text: str, recurrence_id: datetime, event: Event) -> str
     component.add("RECURRENCE-ID", _as_utc(recurrence_id))
     calendar.add_component(component)
     return calendar.to_ical().decode("utf-8")
+
+
+def truncate_series(text: str, before: datetime, *, keep_count: int | None = None) -> str:
+    """Return ``text`` with the series ending just before ``before``.
+
+    This is half of "this and all following events": the existing resource
+    keeps the occurrences up to the split, and a *separate* event carries the
+    ones after it.
+
+    ``COUNT`` and ``UNTIL`` may not both appear in a rule, so a counted
+    series has its ``COUNT`` replaced — by ``keep_count`` when the caller has
+    worked out how many occurrences remain on this side, and otherwise by an
+    ``UNTIL``.  Anything that belonged to the far side of the split — an
+    override, an excluded date — is dropped, because it now belongs to the
+    new series rather than to this one.
+    """
+    calendar = _parse(text)
+    master = _master_of(calendar)
+    if master is None:
+        raise ParseError("no master event to truncate")
+    rule = master.get("RRULE")
+    if rule is None:
+        raise ParseError("that event does not repeat")
+
+    for component in [c for c in calendar.walk("VEVENT")
+                      if _slot_at_or_after(c, before)]:
+        calendar.subcomponents.remove(component)
+    _drop_exdates_from(master, before)
+
+    values = dict(rule)
+    values.pop("COUNT", None)
+    values.pop("UNTIL", None)
+    if keep_count is not None:
+        values["COUNT"] = [keep_count]
+    else:
+        # UNTIL is inclusive, so step back to stay clear of the split itself.
+        values["UNTIL"] = [_as_utc(before) - timedelta(seconds=1)]
+
+    master.pop("RRULE")
+    master.add("RRULE", icalendar.prop.vRecur(values))
+    return calendar.to_ical().decode("utf-8")
+
+
+def _slot_at_or_after(component, moment: datetime) -> bool:
+    """Whether an override replaces a slot on or after ``moment``."""
+    value = component.get("RECURRENCE-ID")
+    if value is None:
+        return False
+    try:
+        slot, _ = _as_datetime(value.dt)
+    except ParseError:
+        return False
+    return slot >= moment
+
+
+def _drop_exdates_from(master, moment: datetime) -> None:
+    """Remove excluded dates on or after ``moment``."""
+    existing = master.get("EXDATE")
+    if existing is None:
+        return
+    entries = existing if isinstance(existing, list) else [existing]
+    kept = []
+    for entry in entries:
+        for value in getattr(entry, "dts", []):
+            try:
+                when, _ = _as_datetime(value.dt)
+            except ParseError:
+                continue
+            if when < moment:
+                kept.append(_as_utc(when))
+    master.pop("EXDATE")
+    for when in kept:
+        master.add("EXDATE", when)
 
 
 def _parse(text: str) -> icalendar.Calendar:

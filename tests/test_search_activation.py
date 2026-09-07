@@ -272,7 +272,7 @@ class UndoingADelete(OpeningASearchResult):
         before = self.occurrences(series)
         self.assertGreaterEqual(len(before), 3)
 
-        self.sync.delete_occurrence(before[1], whole_series=False)
+        self.sync.delete_occurrence(before[1], scope=self.sync.THIS_EVENT)
         after = self.occurrences(
             self.sync.storage.get_event(self.calendar.id, series.uid))
         self.assertEqual(len(after), len(before) - 1)

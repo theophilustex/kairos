@@ -345,3 +345,65 @@ def sanitise_text(value: str | None, *, max_length: int = 4096) -> str:
     if len(cleaned) > max_length:
         cleaned = cleaned[:max_length] + "…"
     return cleaned
+
+
+#: Finds a bare http(s) URL in free text.  Deliberately not a general URL
+#: matcher: only these two schemes are ever launched, so anything else does
+#: not need recognising.
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"'\]\),]+", re.IGNORECASE)
+
+#: Hosts whose links are worth offering a "Join" button for.  Matched against
+#: the end of the hostname, so "acme.zoom.us" counts and "notzoom.us" does not.
+MEETING_HOSTS = (
+    "zoom.us", "meet.google.com", "teams.microsoft.com", "teams.live.com",
+    "meet.jit.si", "whereby.com", "webex.com", "bluejeans.com",
+    "gotomeeting.com", "chime.aws", "discord.gg", "meet.nextcloud.com",
+    "jitsi.org", "around.co", "vc.sr.ht",
+)
+
+
+def safe_external_url(candidate: str) -> str | None:
+    """A URL that is safe to hand to the desktop's browser, or ``None``.
+
+    Event text comes from a server and may have been written by anyone who
+    can put an entry in your calendar.  Launching whatever it contains would
+    hand them the desktop's "open this" machinery — ``file:///``,
+    ``javascript:``, or any scheme some other application has registered.
+    Only http and https ever come back from here.
+    """
+    if not candidate:
+        return None
+    text = candidate.strip()
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in ALLOWED_SCHEMES or not parsed.netloc:
+        return None
+    return text
+
+
+def find_url(*fields: str) -> str | None:
+    """The first launchable URL in these fields, in the order given."""
+    for field in fields:
+        if not field:
+            continue
+        # A field that is nothing but a URL is the common case for the
+        # iCalendar URL property, and needs no searching.
+        direct = safe_external_url(field)
+        if direct is not None:
+            return direct
+        for match in _URL_IN_TEXT.finditer(field):
+            found = safe_external_url(match.group(0).rstrip(".,;:"))
+            if found is not None:
+                return found
+    return None
+
+
+def is_meeting_url(url: str | None) -> bool:
+    """Whether a URL looks like somewhere you would join a call."""
+    if not url:
+        return False
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == known or host.endswith("." + known)
+               for known in MEETING_HOSTS)

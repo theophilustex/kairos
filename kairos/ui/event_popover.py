@@ -16,6 +16,7 @@ from gi.repository import Adw, GObject, Gtk  # noqa: E402
 from kairos import formatting
 from kairos.ical import describe_rrule
 from kairos.models import Occurrence
+from kairos.security import find_url, is_meeting_url
 from kairos.ui.widgets import colour_swatch
 
 
@@ -99,6 +100,18 @@ class EventPopover(Gtk.Popover):
         buttons.set_halign(Gtk.Align.END)
         buttons.set_margin_top(4)
 
+        # A link to join, if there is one. The URL property is checked first
+        # because that is where it belongs; in practice most invitations put
+        # it in the location or somewhere in the notes instead.
+        self._link = find_url(occurrence.event.url,
+                              occurrence.event.location,
+                              occurrence.event.description)
+        if self._link:
+            join = Gtk.Button(label="Join" if is_meeting_url(self._link) else "Open link")
+            join.add_css_class("suggested-action")
+            join.connect("clicked", self._on_join)
+            buttons.append(join)
+
         if editable:
             delete = Gtk.Button(label="Delete")
             delete.add_css_class("destructive-action")
@@ -131,6 +144,17 @@ class EventPopover(Gtk.Popover):
         row.append(label)
         return row
 
+    def _on_join(self, button) -> None:
+        """Hand the link to the desktop's browser.
+
+        ``find_url`` has already refused anything that is not http or https,
+        so this cannot be talked into opening a local file or some other
+        application's scheme by an event someone else put in the calendar.
+        """
+        self.popdown()
+        Gtk.UriLauncher(uri=self._link).launch(
+            button.get_root(), None, None, None)
+
     def _on_edit(self, _button) -> None:
         self.popdown()
         self.emit("edit-requested", self.occurrence)
@@ -140,12 +164,45 @@ class EventPopover(Gtk.Popover):
         self.emit("delete-requested", self.occurrence)
 
 
+#: The three answers to "which occurrences?", matching SyncManager's names.
+THIS_EVENT = "this"
+THIS_AND_FOLLOWING = "following"
+ALL_EVENTS = "all"
+SCOPES = (THIS_EVENT, THIS_AND_FOLLOWING, ALL_EVENTS)
+
+
+def _scope_dialog(*, heading: str, summary: str, day, verb: str,
+                  destructive: bool) -> Adw.AlertDialog:
+    """The "this / this and following / all" question.
+
+    Shared by editing and deleting so the wording and the button order cannot
+    drift apart — with three choices and a destructive one among them, a user
+    reading the same sentence twice is worth more than a little duplication.
+    """
+    dialog = Adw.AlertDialog(
+        heading=heading,
+        body=(f"“{summary}” repeats. {verb} only the occurrence on "
+              f"{formatting.format_date(day)}, this one and the rest of the "
+              f"series, or every occurrence?"))
+    dialog.add_response("cancel", "Cancel")
+    dialog.add_response(THIS_EVENT, "This event")
+    dialog.add_response(THIS_AND_FOLLOWING, "This and following")
+    dialog.add_response(ALL_EVENTS, "All events")
+    if destructive:
+        for response in SCOPES:
+            dialog.set_response_appearance(response,
+                                           Adw.ResponseAppearance.DESTRUCTIVE)
+    dialog.set_default_response("cancel" if destructive else THIS_EVENT)
+    dialog.set_close_response("cancel")
+    return dialog
+
+
 def confirm_delete(parent: Gtk.Widget, occurrence: Occurrence, on_confirm) -> None:
     """Ask before deleting, since there is no undo.
 
-    ``on_confirm`` is called with ``whole_series=True`` or ``False``.  For an
+    ``on_confirm`` is called with ``scope=`` one of :data:`SCOPES`.  For an
     event that does not repeat there is nothing to choose and it is always
-    ``True`` — deleting the one occurrence *is* deleting the event.
+    ``ALL_EVENTS`` — deleting the one occurrence *is* deleting the event.
     """
     repeating = occurrence.recurrence_id is not None and occurrence.event.is_recurring
     if not repeating:
@@ -158,57 +215,40 @@ def confirm_delete(parent: Gtk.Widget, occurrence: Occurrence, on_confirm) -> No
         dialog.set_default_response("cancel")
         dialog.set_close_response("cancel")
         dialog.connect("response", lambda _d, response: (
-            on_confirm(whole_series=True) if response == "delete" else None))
+            on_confirm(scope=ALL_EVENTS) if response == "delete" else None))
         dialog.present(parent)
         return
 
-    dialog = Adw.AlertDialog(
+    dialog = _scope_dialog(
         heading="Delete a repeating event",
-        body=(f"“{occurrence.summary}” repeats. Delete only the occurrence on "
-              f"{formatting.format_date(occurrence.start.date())}, or "
-              f"every one?"))
-    dialog.add_response("cancel", "Cancel")
-    dialog.add_response("this", "This event")
-    dialog.add_response("all", "All events")
-    dialog.set_response_appearance("this", Adw.ResponseAppearance.DESTRUCTIVE)
-    dialog.set_response_appearance("all", Adw.ResponseAppearance.DESTRUCTIVE)
-    dialog.set_default_response("cancel")
-    dialog.set_close_response("cancel")
-
-    def on_response(_dialog, response: str) -> None:
-        if response in ("this", "all"):
-            on_confirm(whole_series=response == "all")
-
-    dialog.connect("response", on_response)
+        summary=occurrence.summary,
+        day=occurrence.start.date(),
+        verb="Delete",
+        destructive=True,
+    )
+    dialog.connect("response", lambda _d, response: (
+        on_confirm(scope=response) if response in SCOPES else None))
     dialog.present(parent)
 
 
 def ask_edit_scope(parent: Gtk.Widget, occurrence: Occurrence, on_choice) -> None:
     """Ask whether an edit applies to one occurrence or the whole series.
 
-    Calls ``on_choice(whole_series=...)``, and does not ask at all when the
-    event does not repeat — there is only one answer then.
+    Calls ``on_choice(scope=...)`` with one of :data:`SCOPES`, and does not
+    ask at all when the event does not repeat — there is only one answer.
     """
     repeating = occurrence.recurrence_id is not None and occurrence.event.is_recurring
     if not repeating:
-        on_choice(whole_series=True)
+        on_choice(scope=ALL_EVENTS)
         return
 
-    dialog = Adw.AlertDialog(
+    dialog = _scope_dialog(
         heading="Edit a repeating event",
-        body=(f"“{occurrence.summary}” repeats. Change only the occurrence on "
-              f"{formatting.format_date(occurrence.start.date())}, or "
-              f"every one?"))
-    dialog.add_response("cancel", "Cancel")
-    dialog.add_response("this", "This event")
-    dialog.add_response("all", "All events")
-    dialog.set_response_appearance("all", Adw.ResponseAppearance.SUGGESTED)
-    dialog.set_default_response("this")
-    dialog.set_close_response("cancel")
-
-    def on_response(_dialog, response: str) -> None:
-        if response in ("this", "all"):
-            on_choice(whole_series=response == "all")
-
-    dialog.connect("response", on_response)
+        summary=occurrence.summary,
+        day=occurrence.start.date(),
+        verb="Change",
+        destructive=False,
+    )
+    dialog.connect("response", lambda _d, response: (
+        on_choice(scope=response) if response in SCOPES else None))
     dialog.present(parent)

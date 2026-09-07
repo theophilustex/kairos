@@ -31,6 +31,32 @@ log = logging.getLogger(__name__)
 MAX_OCCURRENCES_PER_EVENT = 2000
 
 
+def counted_occurrences(event: Event) -> int | None:
+    """How many occurrences a COUNT-limited series has, or ``None``.
+
+    Splitting such a series has to divide the count between the two halves,
+    because a rule may not carry both COUNT and UNTIL.
+    """
+    if not event.rrule:
+        return None
+    for part in event.rrule.split(";"):
+        name, _, value = part.partition("=")
+        if name.strip().upper() == "COUNT":
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
+
+
+def occurrences_before(event: Event, moment: datetime) -> int:
+    """How many of a series' occurrences start before ``moment``."""
+    window_end = to_local(moment)
+    found = _expand_recurring(event, to_local(event.start) - timedelta(days=1),
+                              window_end)
+    return sum(1 for occurrence in found if occurrence.start < window_end)
+
+
 def _instance_event(master: Event, instance, start: datetime, end: datetime) -> Event:
     """The event one instance should be shown as.
 
