@@ -236,3 +236,56 @@ class FindingAChip(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UndoingADelete(OpeningASearchResult):
+    """Deleting is the one destructive action, so it offers an undo."""
+
+    def make_repeating(self):
+        start = self.event.start - timedelta(days=7)
+        event = Event.new(self.calendar.id, start, start + timedelta(hours=1),
+                          "Standup")
+        event.rrule = "FREQ=WEEKLY"
+        self.sync.save_event(event)
+        return self.sync.storage.get_event(self.calendar.id, event.uid)
+
+    def occurrences(self, event, days=21):
+        from kairos import recurrence
+        from kairos.models import local_timezone
+        now = datetime.now(tz=local_timezone())
+        return recurrence.expand([event], now - timedelta(days=8),
+                                 now + timedelta(days=days))
+
+    def test_restoring_brings_a_deleted_event_back(self):
+        before = self.sync.storage.get_event(self.calendar.id, self.event.uid)
+        self.sync.delete_event(before)
+        self.assertIsNone(self.sync.storage.get_event(self.calendar.id,
+                                                      self.event.uid))
+        self.sync.restore_event(before)
+        restored = self.sync.storage.get_event(self.calendar.id, self.event.uid)
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored.summary, "Dentist")
+
+    def test_restoring_brings_back_one_deleted_occurrence(self):
+        """The undo has to put the EXDATE back, not recreate an event."""
+        series = self.make_repeating()
+        before = self.occurrences(series)
+        self.assertGreaterEqual(len(before), 3)
+
+        self.sync.delete_occurrence(before[1], whole_series=False)
+        after = self.occurrences(
+            self.sync.storage.get_event(self.calendar.id, series.uid))
+        self.assertEqual(len(after), len(before) - 1)
+
+        self.sync.restore_event(series)
+        again = self.occurrences(
+            self.sync.storage.get_event(self.calendar.id, series.uid))
+        self.assertEqual(len(again), len(before))
+
+    def test_the_window_offers_an_undo_toast(self):
+        before = self.sync.storage.get_event(self.calendar.id, self.event.uid)
+        self.sync.delete_event(before)
+        self.window._offer_undo("Event deleted", before)   # must not raise
+        self.sync.restore_event(before)
+        self.assertIsNotNone(
+            self.sync.storage.get_event(self.calendar.id, self.event.uid))

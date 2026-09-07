@@ -99,7 +99,6 @@ Defaults are what Kairos uses if the key is absent.
 | `show_week_numbers` | `false` | true / false | A thin ISO week column in the month view. |
 | `highlight_weekends` | `true` | true / false | Shades Saturday and Sunday. |
 | `week_view_start_hour` | `7` | 0–23 | Hour scrolled to when the week view is not showing today. |
-| `week_view_end_hour` | `21` | 1–24 | Reserved; the grid always covers the whole day. |
 | `hour_height` | `48` | 24–160 | Pixels per hour in the week and day views. |
 | `max_chips_per_day` | `4` | 1–12 | Events shown in a month cell before "+N more". |
 | `agenda_days` | `30` | 1–365 | How far the agenda view looks ahead. |

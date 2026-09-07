@@ -224,6 +224,22 @@ class SyncManager(GObject.Object):
             return
         self._save_series_text(original, text)
 
+    def restore_event(self, event: Event) -> None:
+        """Put back an event, or a series, exactly as it was before a delete.
+
+        Deleting is the one thing here that loses work, so it is undoable.
+        The event carries the iCalendar it had beforehand, which is what makes
+        one undo cover both cases: a whole event comes back, and a series
+        comes back without the EXDATE that removed one occurrence from it.
+
+        If the deletion already reached the server the resource is gone, and
+        this writes it again — the conditional PUT fails, and the backend
+        falls back to an unconditional one, which is the behaviour that
+        exists so a user's change is never the thing that gets dropped.
+        """
+        from kairos import ical
+        self._save_series_text(event, event.raw_ics or ical.to_ical_text(event))
+
     @staticmethod
     def _is_one_of_a_series(occurrence: Occurrence) -> bool:
         """Whether "just this one" is even a meaningful choice here."""

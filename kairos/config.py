@@ -76,7 +76,6 @@ DEFAULTS: dict[str, Any] = {
     "show_week_numbers": False,
     "highlight_weekends": True,
     "week_view_start_hour": 7,      # first hour scrolled into view
-    "week_view_end_hour": 21,
     "hour_height": 48,              # pixels per hour in the week/day views
     "max_chips_per_day": 4,         # month view: chips before "+N more"
     "agenda_days": 30,              # how far the agenda view looks ahead
@@ -131,7 +130,6 @@ _CHOICES: dict[str, tuple[str, ...]] = {
 _RANGES: dict[str, tuple[float, float]] = {
     "font_scale": (0.75, 1.5),
     "week_view_start_hour": (0, 23),
-    "week_view_end_hour": (1, 24),
     "hour_height": (24, 160),
     "max_chips_per_day": (1, 12),
     "agenda_days": (1, 365),

@@ -246,7 +246,12 @@ class CalendarWindow(Adw.ApplicationWindow):
         body.append(self._search_bar)
         body.append(self._banner)
         body.append(self._stack)
-        toolbar.set_content(body)
+
+        # Deleting is the one destructive thing in Kairos, so it gets an undo
+        # rather than only a confirmation.
+        self._toasts = Adw.ToastOverlay()
+        self._toasts.set_child(body)
+        toolbar.set_content(self._toasts)
 
         return Adw.NavigationPage.new(toolbar, "Calendar")
 
@@ -651,9 +656,22 @@ class CalendarWindow(Adw.ApplicationWindow):
         ask_edit_scope(self, occurrence, open_editor)
 
     def _on_delete_requested(self, _popover, occurrence: Occurrence) -> None:
-        confirm_delete(self, occurrence, lambda *, whole_series:
-                       self.sync.delete_occurrence(occurrence,
-                                                   whole_series=whole_series))
+        def delete(*, whole_series: bool) -> None:
+            # Snapshot before the delete: for a single occurrence the change
+            # is an EXDATE inside the series' iCalendar, so putting it back
+            # means restoring that document, not recreating an event.
+            before = occurrence.event
+            self.sync.delete_occurrence(occurrence, whole_series=whole_series)
+            self._offer_undo(
+                "Event deleted" if whole_series else "Occurrence deleted", before)
+
+        confirm_delete(self, occurrence, delete)
+
+    def _offer_undo(self, message: str, event) -> None:
+        toast = Adw.Toast(title=message, timeout=6)
+        toast.set_button_label("Undo")
+        toast.connect("button-clicked", lambda *_: self.sync.restore_event(event))
+        self._toasts.add_toast(toast)
 
     # ------------------------------------------------------------------
     # Dialogs

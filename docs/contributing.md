@@ -32,7 +32,7 @@ python3 -m unittest tests.test_ical -v      # one module
 python3 -m unittest tests.test_ical.AllDayEvents.test_written_as_dates_not_datetimes
 ```
 
-400 tests, all standard-library `unittest`. There is no framework to install
+410 tests, all standard-library `unittest`. There is no framework to install
 and no configuration file.
 
 | Module | |

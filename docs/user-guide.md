@@ -140,8 +140,13 @@ The editor has:
 
 Pressing <kbd>Enter</kbd> in the title field saves.
 
-Editing or deleting a repeating event affects **the whole series**. The delete
-dialog says so.
+**Repeating events** ask before an edit or a delete whether you mean *this
+event* or *all events*. Changing one occurrence leaves the rest of the series
+alone; deleting one removes just that date.
+
+**Deleting can be undone.** A bar appears at the bottom of the window with an
+**Undo** button for a few seconds afterwards — for a whole event, and for a
+single occurrence of a repeating one.
 
 ### Times and timezones
 
@@ -246,10 +251,9 @@ you flick.
 
 Stated plainly, because finding out later is annoying:
 
-- **Modified instances of a repeating event are ignored.** Move one occurrence
-  of a weekly meeting in another client and Kairos shows the series as though
-  you had not. Editing or deleting a repeating event here affects the whole
-  series.
+- **"This and all future events" is not offered.** Editing a repeating event
+  changes either one occurrence or the entire series; there is no third
+  option that splits it at a date.
 - **No tasks or notes** (VTODO, VJOURNAL). Calendars holding only tasks are
   skipped when an account is added.
 - **No invitations, attendees, RSVPs or free/busy.** Kairos reads and writes
