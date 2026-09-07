@@ -90,8 +90,18 @@ ITEM_XML = """
 </node>
 """
 
-#: The menu interface. Hosts call GetLayout to draw the menu and Event when
-#: something is clicked; the rest is here because hosts probe for it.
+#: The menu interface.
+#:
+#: Every method here is required, including the ones that look like
+#: duplicates. ``EventGroup`` and ``AboutToShowGroup`` are the version-3 batch
+#: forms, and libdbusmenu — the client behind most panels, including Mint's
+#: xapp-sn-watcher — uses them in preference to the singular forms whenever
+#: the server says ``Version = 3``, as we do.
+#:
+#: Leaving one out does not produce an error anyone sees. GDBus rejects a call
+#: to an undeclared method before it reaches our handler, and libdbusmenu
+#: discards the failure, so the menu draws perfectly and clicking it does
+#: nothing at all.
 MENU_XML = """
 <node>
   <interface name="com.canonical.dbusmenu">
@@ -122,9 +132,18 @@ MENU_XML = """
       <arg name="data" type="v" direction="in"/>
       <arg name="timestamp" type="u" direction="in"/>
     </method>
+    <method name="EventGroup">
+      <arg name="events" type="a(isvu)" direction="in"/>
+      <arg name="idErrors" type="ai" direction="out"/>
+    </method>
     <method name="AboutToShow">
       <arg name="id" type="i" direction="in"/>
       <arg name="needUpdate" type="b" direction="out"/>
+    </method>
+    <method name="AboutToShowGroup">
+      <arg name="ids" type="ai" direction="in"/>
+      <arg name="updatesNeeded" type="ai" direction="out"/>
+      <arg name="idErrors" type="ai" direction="out"/>
     </method>
     <signal name="LayoutUpdated">
       <arg name="revision" type="u"/>
@@ -354,6 +373,22 @@ class TrayIcon:
         ]
         return (0, {"children-display": GLib.Variant("s", "submenu")}, children)
 
+    def _activate(self, identifier: int, event_id: str) -> bool:
+        """Run the action for a clicked item. Returns whether it was ours.
+
+        The return value is what ``EventGroup`` reports back as ``idErrors``,
+        so a host can tell which of a batch of events went nowhere.
+        """
+        if event_id != "clicked" or not 1 <= identifier <= len(self.items):
+            return False
+        item = self.items[identifier - 1]
+        if item.callback is None:
+            return False
+        # Run it from the main loop rather than from inside the D-Bus call, so
+        # a slow action cannot make the tray host think we have hung.
+        GLib.idle_add(_run_once, item.callback)
+        return True
+
     def _on_menu_method(self, _conn, _sender, _path, _iface, method, params, invocation):
         if method == "GetLayout":
             invocation.return_value(GLib.Variant("(u(ia{sv}av))", (1, self._layout())))
@@ -378,19 +413,28 @@ class TrayIcon:
 
         elif method == "Event":
             identifier, event_id = params.unpack()[:2]
-            if event_id == "clicked" and 1 <= identifier <= len(self.items):
-                item = self.items[identifier - 1]
-                if item.callback is not None:
-                    # Run the callback from the main loop rather than from
-                    # inside the D-Bus call, so a slow action cannot make the
-                    # tray host think we have hung.
-                    GLib.idle_add(_run_once, item.callback)
+            self._activate(identifier, event_id)
             invocation.return_value(None)
+
+        elif method == "EventGroup":
+            # The batched form. This is the one libdbusmenu actually uses.
+            failed = [
+                identifier
+                for identifier, event_id, _data, _timestamp in params.unpack()[0]
+                if not self._activate(identifier, event_id)
+            ]
+            invocation.return_value(GLib.Variant("(ai)", (failed,)))
 
         elif method == "AboutToShow":
             invocation.return_value(GLib.Variant("(b)", (False,)))
 
+        elif method == "AboutToShowGroup":
+            # Nothing ever needs updating: the menu is built once, and its
+            # items do not change while it is open.
+            invocation.return_value(GLib.Variant("(aiai)", ([], [])))
+
         else:
+            log.debug("unhandled tray menu method %s", method)
             invocation.return_value(None)
 
 

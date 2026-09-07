@@ -223,6 +223,15 @@ GTK 4 cannot be loaded into the same process. `tray.py` therefore speaks
 `org.kde.StatusNotifierItem` and `com.canonical.dbusmenu` directly. It is
 about 400 lines and adds no dependency.
 
+The cost of that choice is that the interface XML has to be *complete*.
+`com.canonical.dbusmenu` has singular and batched forms of two methods —
+`Event`/`EventGroup` and `AboutToShow`/`AboutToShowGroup` — and libdbusmenu,
+the client behind most panels, uses the batched ones whenever the server
+reports version 3. Omitting one is invisible: GDBus rejects the call before
+the handler runs, libdbusmenu discards the error, and the menu draws perfectly
+while doing nothing. `tests/test_background.py` therefore asserts on the
+*declaration*, not just the handler.
+
 **Why is the week grid made of rows rather than pixels?** Each day is a
 `Gtk.Grid` of fifteen-minute rows, and an event is attached spanning the rows
 it covers, so GTK does the layout. The only pixel value involved is the height

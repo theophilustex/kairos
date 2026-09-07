@@ -125,6 +125,135 @@ class MenuLayout(unittest.TestCase):
         self.assertEqual(version.get_uint32(), 3)
 
 
+class TheMenuInterface(unittest.TestCase):
+    """Every method a real client might call must be *declared*.
+
+    This is the class of bug that cost an afternoon: GDBus rejects a call to a
+    method missing from the interface XML before our handler ever runs, and
+    libdbusmenu discards the failure. The menu drew perfectly and every item
+    did nothing, with not one line in any log.
+
+    So these check the declaration, not just the handler. A handler-level test
+    would have passed throughout.
+    """
+
+    #: What libdbusmenu and the JS clients between them call. The batch forms
+    #: are not optional: libdbusmenu prefers them whenever the server reports
+    #: Version 3, which we do.
+    REQUIRED = (
+        "GetLayout", "GetGroupProperties", "GetProperty",
+        "Event", "EventGroup", "AboutToShow", "AboutToShowGroup",
+    )
+
+    def setUp(self):
+        from gi.repository import Gio
+        from kairos.tray import MENU_XML
+        self.interface = Gio.DBusNodeInfo.new_for_xml(MENU_XML).interfaces[0]
+        self.declared = {m.name for m in self.interface.methods}
+
+    def test_every_required_method_is_declared(self):
+        for name in self.REQUIRED:
+            with self.subTest(method=name):
+                self.assertIn(name, self.declared,
+                              f"{name} is missing from the interface, so GDBus "
+                              f"will reject it before the handler runs")
+
+    def test_the_batch_forms_have_the_right_signatures(self):
+        """A wrong signature fails just as silently as a missing method."""
+        expected = {
+            "EventGroup": ("a(isvu)", "ai"),
+            "AboutToShowGroup": ("ai", "aiai"),
+            "Event": ("isvu", ""),
+            "AboutToShow": ("i", "b"),
+        }
+        by_name = {m.name: m for m in self.interface.methods}
+        for name, (args_in, args_out) in expected.items():
+            with self.subTest(method=name):
+                method = by_name[name]
+                self.assertEqual("".join(a.signature for a in method.in_args), args_in)
+                self.assertEqual("".join(a.signature for a in method.out_args), args_out)
+
+    def test_the_version_we_claim_matches_what_we_implement(self):
+        """Claiming 3 is what makes clients use the batch forms."""
+        tray = a_tray()
+        version = tray._on_menu_property(None, None, None, None, "Version").get_uint32()
+        self.assertEqual(version, 3)
+        if version >= 3:
+            self.assertIn("EventGroup", self.declared)
+            self.assertIn("AboutToShowGroup", self.declared)
+
+    def test_every_declared_method_is_answered(self):
+        """No declared method may fall through and silently do nothing."""
+        from gi.repository import GLib
+        payloads = {
+            "GetLayout": GLib.Variant("(iias)", (0, -1, [])),
+            "GetGroupProperties": GLib.Variant("(aias)", ([], [])),
+            "GetProperty": GLib.Variant("(is)", (1, "label")),
+            "Event": GLib.Variant("(isvu)", (1, "clicked", GLib.Variant("i", 0), 0)),
+            "EventGroup": GLib.Variant("(a(isvu))",
+                                       ([(1, "clicked", GLib.Variant("i", 0), 0)],)),
+            "AboutToShow": GLib.Variant("(i)", (0,)),
+            "AboutToShowGroup": GLib.Variant("(ai)", ([1],)),
+        }
+        tray = a_tray()
+        for name in self.REQUIRED:
+            with self.subTest(method=name):
+                captured = []
+                tray._on_menu_method(None, None, None, None, name,
+                                     payloads[name], _Invocation(captured))
+                self.assertEqual(len(captured), 1,
+                                 f"{name} did not reply at all")
+
+
+class ClickingTheMenuInBatches(unittest.TestCase):
+    """EventGroup is the path a real panel takes."""
+
+    def setUp(self):
+        self.clicked = []
+        self.tray = a_tray(items=[
+            MenuItem("First", lambda: self.clicked.append("first")),
+            MenuItem(separator=True),
+            MenuItem("Second", lambda: self.clicked.append("second")),
+        ])
+
+    def send_group(self, events):
+        captured = []
+        self.tray._on_menu_method(
+            None, None, None, None, "EventGroup",
+            GLib.Variant("(a(isvu))",
+                         ([(i, e, GLib.Variant("i", 0), 0) for i, e in events],)),
+            _Invocation(captured),
+        )
+        context = GLib.MainContext.default()
+        while context.pending():
+            context.iteration(False)
+        return captured[0].unpack()[0]        # idErrors
+
+    def test_a_batched_click_runs_the_action(self):
+        self.assertEqual(self.send_group([(1, "clicked")]), [])
+        self.assertEqual(self.clicked, ["first"])
+
+    def test_several_at_once(self):
+        self.send_group([(1, "clicked"), (3, "clicked")])
+        self.assertEqual(self.clicked, ["first", "second"])
+
+    def test_unhandled_ids_are_reported_back(self):
+        self.assertEqual(self.send_group([(99, "clicked")]), [99])
+
+    def test_a_separator_is_reported_rather_than_run(self):
+        self.assertEqual(self.send_group([(2, "clicked")]), [2])
+        self.assertEqual(self.clicked, [])
+
+    def test_non_click_events_are_reported(self):
+        self.assertEqual(self.send_group([(1, "hovered")]), [1])
+        self.assertEqual(self.clicked, [])
+
+    def test_a_mixed_batch_runs_what_it_can(self):
+        errors = self.send_group([(1, "clicked"), (99, "clicked"), (3, "clicked")])
+        self.assertEqual(errors, [99])
+        self.assertEqual(self.clicked, ["first", "second"])
+
+
 class ClickingTheMenu(unittest.TestCase):
     def setUp(self):
         self.clicked = []

@@ -126,6 +126,18 @@ for `tray icon registered`.
 Without an icon, launch Kairos again from your applications menu to bring the
 window back — it is single-instance, so that raises the existing one.
 
+### The menu opens but nothing happens when I click it
+
+Fixed in the current version. If you are on an older build, the tray menu
+declared only the singular `Event` method, while libdbusmenu — the client
+behind most panels, including Mint's `xapp-sn-watcher` — uses the batched
+`EventGroup` whenever a server reports dbusmenu version 3. The call was
+rejected before Kairos saw it and the failure was discarded, so every item
+drew correctly and did nothing.
+
+If it happens again, `kairos --debug` logs every menu method the panel calls;
+an "unhandled tray menu method" line names the culprit.
+
 ### The icon is blank
 
 Kairos sends the icon as raw pixels as well as by name, so this should not
