@@ -11,30 +11,47 @@ kairos --debug
 ## My calendars appear but they have no events in them
 
 Kairos found the calendars, so the address and password are right; something
-is going wrong one step later. Run the diagnostic against your own server —
-it only reads, and prints no event titles unless you ask it to:
+is going wrong one step later. Ask the server directly — this only reads,
+and prints no event titles unless you add `--show-titles`, so the output is
+safe to paste into a bug report:
 
 ```sh
-./packaging/diagnose-caldav.py https://dav.example.com/ you@example.com
+kairos --diagnose https://dav.example.com/ you@example.com
+
+# or, running the AppImage:
+./Kairos-x86_64.AppImage --diagnose https://dav.example.com/ you@example.com
 ```
 
 It walks the same path Kairos does and says which step produced nothing.
-The three answers it gives:
 
-- **"The server ignores or mishandles the date filter."** Kairos asks for
-  events between two dates; some servers answer that with nothing at all
-  rather than with everything in range. Kairos now notices an empty answer
-  and asks again for the whole collection, so this should fix itself — make
-  sure you are running a current build.
-- **"The server reports this calendar as empty."** The collection really does
-  look empty to us. Check you are pointing at the right account, and that the
-  events are not outside the sync window (`sync_window_past_days` and
+**Why this happens.** Kairos asks for events with a CalDAV `REPORT`. A
+server that does not support one properly answers with *nothing* rather than
+with an error, which is indistinguishable from an empty calendar. Kairos
+therefore tries three routes in turn, stopping at the first that returns
+anything:
+
+1. a `calendar-query` for the date window — one request, what almost every
+   server answers correctly;
+2. a `calendar-query` for the whole collection, for servers that mishandle
+   the date filter specifically;
+3. a plain `PROPFIND` listing and one `GET` per resource, which uses no
+   `REPORT` at all and works against anything that is a WebDAV server. This
+   is the route a Synology NAS needs.
+
+So the answers the diagnostic gives:
+
+- **"…falls back to reading everything"** or **"…falls back to a plain
+  PROPFIND listing"** — a current build already handles it. Update.
+- **"The server reports this calendar as empty."** It really does look empty.
+  Check you are pointing at the right account, and that your events are not
+  outside the sync window (`sync_window_past_days` and
   `sync_window_future_days` in [configuration](configuration.md)).
-- **"Objects came back but none could be parsed."** The server is sending
-  iCalendar that Kairos cannot read. Please report the output.
+- **"none of them could be read or parsed"** or **"Objects came back but none
+  could be parsed"** — the server is sending iCalendar Kairos cannot read.
+  Please report the output.
 
-Running `kairos --debug` also logs one line per calendar per sync saying how
-many objects came back and how many events were parsed from them.
+`kairos --debug` also logs one line per calendar per sync saying how many
+objects came back and how many events were parsed from them.
 
 ## It will not start
 

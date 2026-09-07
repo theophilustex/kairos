@@ -689,3 +689,76 @@ class ServersThatMisbehave(CalDAVServerTestCase):
             collection.events = real_events
         self.assertEqual([e.summary for e in found], ["Ordinary"])
         self.assertEqual(calls, [], "asked for everything when it need not")
+
+
+class AServerWithNoWorkingReport(CalDAVServerTestCase):
+    """Both calendar-query routes return nothing, as on some servers.
+
+    Reported against a Synology NAS: calendars discovered, every one of them
+    empty. A REPORT that answers with nothing rather than with an error is
+    indistinguishable from an empty calendar, so Kairos falls back to a plain
+    PROPFIND listing and a GET per resource.
+    """
+
+    def blinded(self):
+        """A collection whose calendar-query always comes back empty."""
+        import caldav
+        collection = caldav.Calendar(client=self.backend._connect(),
+                                     url=self.calendar.url)
+        collection.search = lambda *a, **k: []
+        self.backend._collection = lambda _c: collection
+        return collection
+
+    def test_the_events_are_still_found(self):
+        self.backend.save_event(self.calendar, self.make("Hidden by REPORT"))
+        self.blinded()
+        found = self.backend.fetch_events(
+            self.calendar, self.now - timedelta(days=2),
+            self.now + timedelta(days=30))
+        self.assertEqual([e.summary for e in found], ["Hidden by REPORT"])
+
+    def test_several_events_all_come_back(self):
+        for index in range(4):
+            self.backend.save_event(self.calendar, self.make(f"Event {index}",
+                                                             hours_ahead=index + 1))
+        self.blinded()
+        found = self.backend.fetch_events(
+            self.calendar, self.now - timedelta(days=2),
+            self.now + timedelta(days=30))
+        self.assertEqual(len(found), 4)
+
+    def test_they_are_parsed_not_just_counted(self):
+        self.backend.save_event(self.calendar,
+                                self.make("Dentist", location="High Street"))
+        self.blinded()
+        found = self.backend.fetch_events(
+            self.calendar, self.now - timedelta(days=2),
+            self.now + timedelta(days=30))
+        self.assertEqual(found[0].location, "High Street")
+        self.assertTrue(found[0].href)
+
+    def test_an_empty_calendar_is_still_empty(self):
+        """The fallback must not invent anything."""
+        self.blinded()
+        self.assertEqual(self.backend.fetch_events(
+            self.calendar, self.now - timedelta(days=2),
+            self.now + timedelta(days=30)), [])
+
+    def test_the_fallback_is_not_used_when_a_report_works(self):
+        self.backend.save_event(self.calendar, self.make("Ordinary"))
+        import caldav
+        collection = caldav.Calendar(client=self.backend._connect(),
+                                     url=self.calendar.url)
+        calls = []
+        real_children = collection.children
+        collection.children = lambda *a, **k: (calls.append(1),
+                                               real_children(*a, **k))[1]
+        self.backend._collection = lambda _c: collection
+        try:
+            found = self.backend.fetch_events(
+                self.calendar, self.now - timedelta(days=2),
+                self.now + timedelta(days=30))
+        finally:
+            collection.children = real_children
+        self.assertEqual([e.summary for e in found], ["Ordinary"])
+        self.assertEqual(calls, [], "listed the collection needlessly")

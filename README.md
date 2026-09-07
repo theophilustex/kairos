@@ -11,7 +11,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![GTK 4 · libadwaita](https://img.shields.io/badge/GTK%204-libadwaita-4a86cf?style=flat-square&logo=gnome&logoColor=white)](https://gtk.org/)
 [![CalDAV](https://img.shields.io/badge/CalDAV-read%20%26%20write-9141ac?style=flat-square)](docs/calendars.md)
-[![Tests](https://img.shields.io/badge/tests-620%20passing-2ec27e?style=flat-square)](docs/contributing.md)
+[![Tests](https://img.shields.io/badge/tests-625%20passing-2ec27e?style=flat-square)](docs/contributing.md)
 [![AppImage](https://img.shields.io/badge/AppImage-available-e66100?style=flat-square&logo=linux&logoColor=white)](docs/installation.md)
 [![No telemetry](https://img.shields.io/badge/telemetry-none-c01c28?style=flat-square)](docs/security.md)
 
@@ -143,7 +143,7 @@ The details, and where to look in the code, are in
 make test
 ```
 
-620 tests, standard-library `unittest`, no framework to install. The CalDAV
+625 tests, standard-library `unittest`, no framework to install. The CalDAV
 suite starts a real [Radicale](https://radicale.org) server on localhost and
 drives the backend against it — create, read back, update in place, delete,
 ETags, a genuine 412 conflict, and the offline queue. It skips cleanly if

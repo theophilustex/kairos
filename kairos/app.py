@@ -346,6 +346,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{APP_NAME} {VERSION}")
         return 0
 
+    # A CalDAV server that answers "no events" for a calendar that is not
+    # empty cannot be told apart from an empty one without asking it
+    # directly.  Built in rather than left as a script in the source tree,
+    # because the people who need it are running the AppImage.
+    if "--diagnose" in argv:
+        from kairos import diagnostics
+        _configure_logging("--debug" in argv or "-d" in argv)
+        rest = [a for a in argv[1:] if a != "--diagnose"]
+        return diagnostics.run(rest)
+
     # Argparse handles --help nicely before GTK gets involved.
     if "--help" in argv or "-h" in argv:
         parser = argparse.ArgumentParser(
@@ -355,6 +365,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("-d", "--debug", action="store_true", help="log everything, loudly")
         parser.add_argument("-n", "--new-event", action="store_true",
                             help="open the new-event dialog straight away")
+        parser.add_argument("--diagnose", nargs=2, metavar=("URL", "USERNAME"),
+                            help="ask a CalDAV server what it returns, and "
+                                 "say where it went wrong")
         parser.print_help()
         return 0
 

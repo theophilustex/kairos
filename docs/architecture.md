@@ -65,6 +65,7 @@ kairos/
   notifications.py  planning and firing reminders; PendingReminder
   tray.py           the taskbar icon, spoken over D-Bus by hand
   oauth.py          the OAuth sign-in for providers that refuse a password
+  diagnostics.py    `--diagnose`: what a server actually returns
   autostart.py      the login .desktop file
   formatting.py     every user-visible date string
   theming.py        stylesheets, accent colour, icon search path

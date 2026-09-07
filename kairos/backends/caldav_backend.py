@@ -331,6 +331,14 @@ class CalDAVBackend(Backend):
                          calendar.name, len(everything))
                 results = everything
 
+        # Both of those are calendar-query REPORTs. A server whose REPORT
+        # support is broken or absent answers them with nothing rather than
+        # with an error, and the calendar looks empty. Listing the collection
+        # and reading each resource uses no REPORT at all, and works against
+        # anything that is a WebDAV server.
+        if not results:
+            results = self._list_the_hard_way(collection, calendar)
+
         etags = self._etags_in(collection)
 
         events: list[Event] = []
@@ -356,6 +364,42 @@ class CalDAVBackend(Backend):
         log.info("%s: %d object(s) from the server, %d event(s) parsed",
                  calendar.name, len(results), len(events))
         return events
+
+    def _list_the_hard_way(self, collection, calendar: Calendar) -> list:
+        """Every resource in the collection, found without a REPORT.
+
+        A PROPFIND for the collection's children, then one GET each. Slower
+        than a calendar-query and it ignores the date window, so it is only
+        reached when the two cheaper routes have both come back empty.
+        """
+        try:
+            children = collection.children()
+        except Exception as exc:
+            log.warning("%s: could not list the collection (%s)",
+                        calendar.name, exc)
+            return []
+        if not children:
+            return []
+
+        client = self._connect()
+        found = []
+        for entry in children:
+            url = entry[0] if isinstance(entry, tuple) else entry
+            resource = caldav.CalendarObjectResource(client=client, url=url,
+                                                     parent=collection)
+            try:
+                resource.load()
+            except Exception as exc:
+                log.debug("skipping %s (%s)", url, exc)
+                continue
+            if getattr(resource, "data", None):
+                found.append(resource)
+
+        if found:
+            log.info("%s: neither calendar-query returned anything, but "
+                     "listing the collection found %d resource(s)",
+                     calendar.name, len(found))
+        return found
 
     @staticmethod
     def _data_of(item) -> str:

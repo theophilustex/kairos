@@ -46,8 +46,15 @@ The dialog says why, in words rather than in HTTP codes. The common ones:
 | mailbox.org | `https://dav.mailbox.org/` |
 | Zoho | `https://calendar.zoho.com/caldav/` |
 | Baïkal | `https://your-server/dav.php/` |
-| Synology Calendar | `https://your-nas:5001/caldav/` |
+| Synology Calendar | `https://your-nas:5001/caldav/` (see the note below) |
 | iCloud | `https://caldav.icloud.com/` (needs an app-specific password) |
+
+**Synology.** Its CalDAV does not answer a `calendar-query` REPORT the way
+most servers do, so a client that relies on one finds your calendars and
+then shows them all as empty. Kairos falls back to listing the collection
+and reading each event, which needs no REPORT. If a Synology calendar still
+looks empty, run `kairos --diagnose` (see
+[troubleshooting](troubleshooting.md#my-calendars-appear-but-they-have-no-events-in-them)).
 
 **App passwords.** Fastmail, iCloud, Zoho and anything with two-factor
 authentication will reject your normal password. Generate an app-specific
