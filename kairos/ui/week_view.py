@@ -46,6 +46,36 @@ MIN_BLOCK_PIXELS = 22
 TIME_LABEL_PIXELS = 36
 
 
+def assign_banner_rows(
+    banners: list[tuple[Occurrence, int, int]],
+) -> list[tuple[Occurrence, int, int, int]]:
+    """Stack all-day banners so that no two overlapping ones share a row.
+
+    Takes ``(occurrence, first_column, last_column)`` — column numbers being
+    days across the strip — and returns the same with a row number added.
+
+    Widest bars are placed first and each takes the lowest row that is free
+    for *every* column it covers.  Both matter: a bar has one row for its
+    whole span rather than stepping down mid-week, and a week-long banner
+    ends up on the top line instead of below the short events it passes.
+    """
+    ordered = sorted(banners, key=lambda b: (b[1] - b[2], b[1], b[0].summary))
+    placed: list[tuple[Occurrence, int, int, int]] = []
+    occupied: list[set[int]] = []
+
+    for occurrence, first, last in ordered:
+        columns = set(range(first, last + 1))
+        for row, taken in enumerate(occupied):
+            if not taken & columns:
+                taken |= columns
+                break
+        else:
+            row = len(occupied)
+            occupied.append(set(columns))
+        placed.append((occurrence, first, last, row))
+    return placed
+
+
 def assign_columns(occurrences: list[Occurrence]) -> list[tuple[Occurrence, int, int]]:
     """Work out where side-by-side overlapping events should sit.
 
@@ -157,6 +187,21 @@ class WeekView(Gtk.Box):
         """Pixels per fifteen-minute row, derived from the hour-height setting."""
         return max(4, settings.get_int("hour_height") // ROWS_PER_HOUR)
 
+    @staticmethod
+    def _day_strip(spacer: Gtk.Widget, days: Gtk.Widget) -> Gtk.Grid:
+        """A full-width row split into the hour gutter and the day columns.
+
+        ``days`` shares out its width equally between the days, which is what
+        keeps it lined up with the timed grid below, built the same way.
+        """
+        strip = Gtk.Grid(column_homogeneous=False)
+        strip.set_margin_start(6)
+        strip.set_margin_end(6)
+        strip.attach(spacer, 0, 0, 1, 1)
+        days.set_hexpand(True)
+        strip.attach(days, 1, 0, 1, 1)
+        return strip
+
     def _build_skeleton(self) -> None:
         """Create the parts that never change: headings, gutter, scroller."""
         # The heading row and the all-day strip each start with a blank cell
@@ -172,15 +217,23 @@ class WeekView(Gtk.Box):
         self._gutter_group.add_widget(self._all_day_spacer)
 
         # -- day headings, plus the all-day strip -------------------------
-        self._header = Gtk.Grid(column_homogeneous=False)
-        self._header.set_margin_start(6)
-        self._header.set_margin_end(6)
+        # Both are laid out exactly like the timed body below: the gutter
+        # spacer, then a *homogeneous* box of day columns.  They used to be
+        # plain grids sized to their contents, which meant a day holding a
+        # long banner claimed more width than its neighbours and pushed every
+        # later day sideways — the banners then sat over the wrong columns.
+        self._header_days = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                                    homogeneous=True)
+        self._header = self._day_strip(self._header_spacer, self._header_days)
         self.append(self._header)
 
-        self._all_day_strip = Gtk.Grid(column_homogeneous=False)
+        # A grid rather than a box, because a banner spanning several days is
+        # one widget attached across that many columns.  No column spacing:
+        # the columns have to match the timed grid's exactly, so the gaps
+        # between neighbouring bars come from the chip's own margin instead.
+        self._all_day_days = Gtk.Grid(column_homogeneous=True, column_spacing=0)
+        self._all_day_strip = self._day_strip(self._all_day_spacer, self._all_day_days)
         self._all_day_strip.add_css_class("kairos-all-day-strip")
-        self._all_day_strip.set_margin_start(6)
-        self._all_day_strip.set_margin_end(6)
         self.append(self._all_day_strip)
 
         # -- the scrolling timed area -------------------------------------
@@ -291,10 +344,8 @@ class WeekView(Gtk.Box):
         return occurrence.all_day or occurrence.first_day != occurrence.last_day
 
     def _build_headings(self) -> None:
-        clear_children(self._header)
+        clear_children(self._header_days)
         today = date.today()
-
-        self._header.attach(self._header_spacer, 0, 0, 1, 1)
 
         for offset in range(self.day_count):
             day = self._first_day + timedelta(days=offset)
@@ -319,33 +370,45 @@ class WeekView(Gtk.Box):
             button.set_child(box)
             button.set_hexpand(True)
             button.connect("clicked", lambda _b, d=day: self.emit("day-activated", d))
-            self._header.attach(button, offset + 1, 0, 1, 1)
-
-        self._header.set_column_homogeneous(False)
-        for offset in range(self.day_count):
-            child = self._header.get_child_at(offset + 1, 0)
-            if child is not None:
-                child.set_hexpand(True)
+            self._header_days.append(button)
 
     def _fill_all_day(self, by_day: dict, colours: dict) -> None:
-        """The strip of all-day and multi-day banners above the grid."""
-        clear_children(self._all_day_strip)
+        """The strip of all-day and multi-day banners above the grid.
 
-        self._all_day_strip.attach(self._all_day_spacer, 0, 0, 1, 1)
+        A banner is drawn **once**, spanning every day it covers, rather than
+        repeated in each day's column: a Wednesday-to-Friday trip is a single
+        bar three columns wide, which is both what it is and much easier to
+        read than three identical chips that may not even line up.
+        """
+        clear_children(self._all_day_days)
 
-        any_banner = False
+        # ``by_day`` lists an occurrence once per day it covers, so collapse
+        # it back to one entry each, clipped to the days actually on screen.
+        spans: dict[tuple[str, datetime], tuple[Occurrence, int, int]] = {}
         for offset in range(self.day_count):
             day = self._first_day + timedelta(days=offset)
-            column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
-            column.set_hexpand(True)
             for occurrence in by_day.get(day, []):
-                if not self._is_banner(occurrence):
+                key = (occurrence.uid, occurrence.start)
+                if not self._is_banner(occurrence) or key in spans:
                     continue
-                any_banner = True
-                column.append(self._make_chip(occurrence, colours, css_class="kairos-all-day-chip"))
-            self._all_day_strip.attach(column, offset + 1, 0, 1, 1)
+                spans[key] = (
+                    occurrence,
+                    max(0, (occurrence.first_day - self._first_day).days),
+                    min(self.day_count - 1, (occurrence.last_day - self._first_day).days),
+                )
 
-        self._all_day_strip.set_visible(any_banner)
+        # Row 0 holds an empty box per day so the grid knows it has a column
+        # for every day, including ones with no banner; without them an empty
+        # Saturday would take no width and the rest would spread out to fill.
+        for offset in range(self.day_count):
+            self._all_day_days.attach(Gtk.Box(), offset, 0, 1, 1)
+
+        for occurrence, first, last, row in assign_banner_rows(list(spans.values())):
+            chip = self._make_chip(occurrence, colours,
+                                   css_class="kairos-all-day-chip")
+            self._all_day_days.attach(chip, first, row + 1, last - first + 1, 1)
+
+        self._all_day_strip.set_visible(bool(spans))
 
     def _fill_day(self, grid: Gtk.Grid, day: date, occurrences: list[Occurrence], colours: dict) -> None:
         """Attach one day's timed events to its grid."""

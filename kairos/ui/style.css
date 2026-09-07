@@ -77,7 +77,10 @@
     font-size: 0.82em;
     min-height: 0;
     min-width: 0;
-    margin: 1px 0;
+    /* Horizontal margin too, so that two bars meeting at a day boundary are
+       visibly separate.  It lives inside the grid cell, so it does not move
+       the columns out of step with the timed grid below. */
+    margin: 1px;
     border: none;
     box-shadow: none;
     outline: none;

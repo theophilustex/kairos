@@ -1,20 +1,32 @@
-"""Presentation logic: overlap packing and date formatting.
+"""Presentation logic: overlap packing, banner spans, and date formatting.
 
-These need GTK, because the overlap algorithm lives in the week view module.
-The algorithm itself is pure, so nothing here opens a window.
+These need GTK, because the layout algorithms live in the week view module.
+Most of it is pure arithmetic; the one class that builds a real ``WeekView``
+still never opens a window, it only inspects where things were attached.
 """
 
+import tempfile
 import unittest
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gtk  # noqa: E402
 
-from kairos import formatting
-from kairos.config import settings
-from kairos.models import Event, Occurrence, local_timezone
-from kairos.ui.week_view import MAX_OVERLAP_COLUMNS, ROWS_PER_DAY, assign_columns, row_for
+Adw.init()
+
+from kairos import formatting  # noqa: E402
+from kairos.accounts import AccountStore  # noqa: E402
+from kairos.config import settings  # noqa: E402
+from kairos.models import Event, Occurrence, local_timezone, start_of_day  # noqa: E402
+from kairos.storage import Storage  # noqa: E402
+from kairos.sync import SyncManager  # noqa: E402
+from kairos.ui.week_view import (MAX_OVERLAP_COLUMNS, ROWS_PER_DAY,  # noqa: E402
+                                 WeekView, assign_banner_rows, assign_columns,
+                                 row_for)
 
 
 def at(hour, minute=0):
@@ -72,6 +84,185 @@ class OverlapPacking(unittest.TestCase):
 
     def test_empty_input(self):
         self.assertEqual(assign_columns([]), [])
+
+
+class BannerPacking(unittest.TestCase):
+    """All-day bars in the strip above the week grid.
+
+    The bug these pin shut: a multi-day event used to be drawn as one chip
+    per day in seven independently-sized columns, so a three-day trip became
+    three chips that could sit on different rows and, because a column grew
+    to fit its contents, no longer lined up with the day below it.
+    """
+
+    def rows(self, *spans):
+        """``(first_column, last_column)`` in, ``{name: (first, last, row)}`` out."""
+        banners = [(occurrence(f"b{i}", 9, 10), a, b)
+                   for i, (a, b) in enumerate(spans)]
+        return {o.summary: (first, last, row)
+                for o, first, last, row in assign_banner_rows(banners)}
+
+    def test_a_lone_banner_goes_on_the_top_row(self):
+        self.assertEqual(self.rows((2, 4)), {"b0": (2, 4, 0)})
+
+    def test_a_banner_keeps_one_row_across_its_whole_span(self):
+        """It must not step down mid-week; that is what looked like bleeding."""
+        placed = assign_banner_rows([(occurrence("trip", 9, 10), 2, 4)])
+        _, first, last, row = placed[0]
+        self.assertEqual((first, last, row), (2, 4, 0))
+
+    def test_overlapping_banners_take_different_rows(self):
+        placed = self.rows((2, 4), (2, 2))
+        self.assertNotEqual(placed["b0"][2], placed["b1"][2])
+
+    def test_the_wider_banner_takes_the_top_row(self):
+        placed = self.rows((3, 3), (0, 6))
+        self.assertEqual(placed["b1"][2], 0)
+        self.assertEqual(placed["b0"][2], 1)
+
+    def test_banners_that_do_not_touch_share_a_row(self):
+        placed = self.rows((0, 1), (3, 4), (6, 6))
+        self.assertEqual({p[2] for p in placed.values()}, {0})
+
+    def test_banners_that_only_abut_share_a_row(self):
+        """Monday–Tuesday and Wednesday–Friday do not overlap."""
+        placed = self.rows((0, 1), (2, 4))
+        self.assertEqual(placed["b0"][2], placed["b1"][2])
+
+    def test_a_third_overlapping_banner_takes_a_third_row(self):
+        placed = self.rows((0, 6), (0, 6), (0, 6))
+        self.assertEqual({p[2] for p in placed.values()}, {0, 1, 2})
+
+    def test_every_banner_is_placed_exactly_once(self):
+        placed = assign_banner_rows(
+            [(occurrence(f"b{i}", 9, 10), i % 7, min(6, i % 7 + 2)) for i in range(20)])
+        self.assertEqual(len(placed), 20)
+
+    def test_empty_input(self):
+        self.assertEqual(assign_banner_rows([]), [])
+
+
+class BannerStrip(unittest.TestCase):
+    """The all-day strip as the widget actually builds it.
+
+    Checks the thing a user sees: one bar per event, attached across exactly
+    the days it covers and no others.
+    """
+
+    def setUp(self):
+        settings.set("first_day_of_week", "monday")
+        self.directory = Path(tempfile.mkdtemp(prefix="kairos-banners-"))
+        self.sync = SyncManager(
+            store=Storage(self.directory / "cache.db"),
+            accounts=AccountStore(self.directory / "accounts.json"),
+        )
+        self.calendar = self.sync.calendars()[0]
+        self.monday = date(2026, 8, 31)
+
+    def tearDown(self):
+        self.sync.storage.close()
+
+    def all_day(self, summary, day_offset, days=1):
+        start = start_of_day(self.monday + timedelta(days=day_offset))
+        self.sync.save_event(Event.new(
+            self.calendar.id, start, start + timedelta(days=days),
+            summary, all_day=True))
+
+    def bars(self):
+        """``{summary: (first_column, span)}`` for what the strip attached."""
+        view = WeekView(self.sync)
+        view.set_date(self.monday)
+        view.refresh()
+        found = {}
+        child = view._all_day_days.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Button):
+                column, _row, width, _height = view._all_day_days.query_child(child)
+                found[child.get_child().get_label()] = (column, width)
+            child = child.get_next_sibling()
+        return found
+
+    def test_a_one_day_event_occupies_one_column(self):
+        self.all_day("Birthday", 6)
+        self.assertEqual(self.bars(), {"Birthday": (6, 1)})
+
+    def test_a_multi_day_event_is_one_bar_spanning_its_days(self):
+        """Not three separate chips, which is what made this confusing."""
+        self.all_day("Trip to Lisbon", 2, days=3)
+        self.assertEqual(self.bars(), {"Trip to Lisbon": (2, 3)})
+
+    def test_a_bar_does_not_reach_into_the_next_day(self):
+        self.all_day("Quarter close", 0, days=2)
+        column, width = self.bars()["Quarter close"]
+        self.assertEqual(column + width, 2, "the bar ran past Tuesday")
+
+    def test_an_event_starting_before_the_week_is_clipped(self):
+        self.all_day("Long haul", -3, days=6)
+        self.assertEqual(self.bars(), {"Long haul": (0, 3)})
+
+    def test_an_event_running_past_the_week_is_clipped(self):
+        self.all_day("Long haul", 5, days=9)
+        self.assertEqual(self.bars(), {"Long haul": (5, 2)})
+
+    def test_an_event_spanning_the_whole_week_fills_it(self):
+        self.all_day("Sabbatical", -2, days=30)
+        self.assertEqual(self.bars(), {"Sabbatical": (0, 7)})
+
+    def test_each_event_is_attached_once(self):
+        self.all_day("Trip", 2, days=3)
+        view = WeekView(self.sync)
+        view.set_date(self.monday)
+        view.refresh()
+        buttons = 0
+        child = view._all_day_days.get_first_child()
+        while child is not None:
+            buttons += isinstance(child, Gtk.Button)
+            child = child.get_next_sibling()
+        self.assertEqual(buttons, 1)
+
+    def test_the_strip_hides_itself_when_there_is_nothing_to_show(self):
+        view = WeekView(self.sync)
+        view.set_date(self.monday)
+        view.refresh()
+        self.assertFalse(view._all_day_strip.get_visible())
+
+    def test_a_repeated_refresh_does_not_accumulate_bars(self):
+        self.all_day("Trip", 2, days=3)
+        view = WeekView(self.sync)
+        view.set_date(self.monday)
+        for _ in range(3):
+            view.refresh()
+        buttons = 0
+        child = view._all_day_days.get_first_child()
+        while child is not None:
+            buttons += isinstance(child, Gtk.Button)
+            child = child.get_next_sibling()
+        self.assertEqual(buttons, 1)
+
+    def test_clicking_a_bar_opens_that_event(self):
+        """One bar now stands for several days, so it must still identify itself."""
+        self.all_day("Trip to Lisbon", 2, days=3)
+        view = WeekView(self.sync)
+        view.set_date(self.monday)
+        view.refresh()
+        seen = []
+        view.connect("event-activated", lambda _v, o, _w: seen.append(o.summary))
+
+        child = view._all_day_days.get_first_child()
+        while not isinstance(child, Gtk.Button):
+            child = child.get_next_sibling()
+        child.emit("clicked")
+        self.assertEqual(seen, ["Trip to Lisbon"])
+
+    def test_every_day_keeps_a_column_even_when_empty(self):
+        """Otherwise the days with no banner would collapse to no width."""
+        self.all_day("Birthday", 6)
+        view = WeekView(self.sync)
+        view.set_date(self.monday)
+        view.refresh()
+        for offset in range(7):
+            self.assertIsNotNone(view._all_day_days.get_child_at(offset, 0),
+                                 f"day {offset} has no column placeholder")
 
 
 class RowMath(unittest.TestCase):

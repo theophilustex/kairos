@@ -237,3 +237,22 @@ while doing nothing. `tests/test_background.py` therefore asserts on the
 it covers, so GTK does the layout. The only pixel value involved is the height
 of a row. Overlapping events are packed into columns by `assign_columns()`,
 which is the standard sweep algorithm in about twenty lines.
+
+**The three rows of the week view must share one layout rule.** The day
+headings, the all-day strip and the timed grid are separate widgets stacked
+vertically, and nothing in GTK makes their columns agree — that is the
+view's job. All three are built the same way: the hour gutter in a size
+group, then a container that divides the rest into equal day columns.
+
+Getting this wrong is easy and looks like a different bug entirely. The
+strip and the headings were once plain `Gtk.Grid`s sized to their contents,
+so a day holding a long banner claimed more width than its neighbours and
+shoved every later day sideways — by half a column in the worst case. The
+banners then sat over the wrong days, which reads as an event "bleeding"
+into days it has nothing to do with. `tests/test_layout.py` pins the spans;
+the alignment itself is structural, and stays correct as long as the day
+columns keep being shared out equally in all three rows.
+
+Multi-day banners are attached **once**, spanning their days, and packed
+into lines by `assign_banner_rows()` — widest first, each taking the lowest
+line free across its whole span, so a bar never steps down mid-week.

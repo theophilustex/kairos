@@ -86,8 +86,13 @@ across the days they cover.
 
 **Week** and **Day** — a timed grid. Events sit at their real times, and
 overlapping ones are placed side by side automatically. A line across the grid
-shows the current time. All-day events sit in a strip above it. The view opens
-scrolled to about an hour before now rather than at midnight.
+shows the current time. The view opens scrolled to about an hour before now
+rather than at midnight.
+
+All-day events sit in a strip above the grid. An event covering several days
+is drawn as **one bar across exactly those days**, not repeated in each one,
+and keeps the same line all the way along; a bar reaching past the edge of the
+week is cut off at it. Where bars overlap they stack, longest at the top.
 
 <img src="images/week-view.png" alt="The week view: a timed grid with overlapping events side by side and all-day events in a strip above">
 
