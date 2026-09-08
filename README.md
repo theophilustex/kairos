@@ -91,8 +91,9 @@ Full documentation is in **[docs/](docs/)**.
 
 Four views — month, week, day and agenda — switchable with
 <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>4</kbd> or by swiping. Click an event for its
-details, double-click empty space to create one. <kbd>Ctrl</kbd>+<kbd>F</kbd>
-searches titles, places and notes.
+details; click empty space to pick a slot and again to create there.
+<kbd>Ctrl</kbd>+<kbd>F</kbd> searches titles, places and notes, and opens
+what you pick in the week view.
 
 | | |
 |:--:|:--:|
