@@ -41,6 +41,19 @@ SCHEMA_VERSION = 1
 #: makes the next start rebuild it.
 SEARCH_INDEX_VERSION = 1
 
+#: Bumped when a fix means the *events already cached* are wrong or
+#: incomplete, so they have to be downloaded again. A cached copy is only as
+#: good as the code that fetched it, and a change-token cannot know that the
+#: code has since been corrected — it says "the server has not changed",
+#: which is true and unhelpful. Raising this clears every change-token once,
+#: so the next sync refetches, and nobody has to be told to delete a cache.
+#:
+#: 2: calendar-query returns an abridged copy of an event on some servers,
+#:    and Synology's leaves out the VALARMs. Bodies now come from a
+#:    calendar-multiget, so everything fetched before this is missing its
+#:    reminders.
+FETCH_VERSION = 2
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS calendars (
     id          TEXT PRIMARY KEY,
@@ -185,6 +198,7 @@ class Storage:
                 (str(SCHEMA_VERSION),),
             )
             self._connection.commit()
+        self._refetch_if_stale()
         self.clear_tokens_for_empty_calendars()
         # Parsed events, keyed by (calendar_id, uid, etag-or-length).  Parsing
         # iCalendar is the expensive part of a redraw; this makes repeat views
@@ -250,6 +264,32 @@ class Storage:
             "UPDATE events SET location = ?, description = ? WHERE rowid = ?",
             updates,
         )
+
+    def _refetch_if_stale(self) -> None:
+        """Force one re-download when cached events predate a fetch fix.
+
+        See :data:`FETCH_VERSION`. Clearing the change-tokens is enough: the
+        events themselves are left alone until the replacements arrive, so
+        nothing disappears in the meantime.
+        """
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT value FROM meta WHERE key = 'fetch_version'").fetchone()
+            try:
+                stored = int(row["value"]) if row else 0
+            except (TypeError, ValueError):
+                stored = 0
+            if stored >= FETCH_VERSION:
+                return
+            changed = self._connection.execute(
+                "UPDATE calendars SET sync_token = '' WHERE sync_token != ''").rowcount
+            self._connection.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('fetch_version', ?)",
+                (str(FETCH_VERSION),))
+            self._connection.commit()
+        if changed:
+            log.info("cached events were fetched by an older version; %d "
+                     "calendar(s) will be downloaded again", changed)
 
     def clear_tokens_for_empty_calendars(self) -> int:
         """Forget the change-token of any calendar that holds no events.

@@ -14,6 +14,7 @@ skips, so ``make test`` still works on a machine without it::
 
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -762,3 +763,101 @@ class AServerWithNoWorkingReport(CalDAVServerTestCase):
             collection.children = real_children
         self.assertEqual([e.summary for e in found], ["Ordinary"])
         self.assertEqual(calls, [], "listed the collection needlessly")
+
+
+class AnAbridgedCalendarQuery(CalDAVServerTestCase):
+    """A server whose calendar-query returns less than the resource holds.
+
+    Reported against Synology: every event arrived without its reminders,
+    while everything else about it was correct. A calendar-query is entitled
+    to return an abridged copy of a resource, and there is no way to tell
+    from the outside that it has — the events look fine, they simply have no
+    VALARM in them. Bodies therefore come from a calendar-multiget, which
+    means "give me these, entire".
+    """
+
+    def with_alarm(self, summary="Standup", minutes=10):
+        from kairos.models import Alarm
+        event = self.make(summary)
+        event.alarms = [Alarm(minutes)]
+        return self.backend.save_event(self.calendar, event)
+
+    def blind_the_query(self):
+        """Strip VALARMs from what the calendar-query returns, as Synology does."""
+        import caldav
+        collection = caldav.Calendar(client=self.backend._connect(),
+                                     url=self.calendar.url)
+        real_search = collection.search
+
+        def abridged(*args, **kwargs):
+            found = real_search(*args, **kwargs)
+            for item in found:
+                text = getattr(item, "data", None)
+                if text and "BEGIN:VALARM" in text:
+                    item.data = re.sub(r"BEGIN:VALARM.*?END:VALARM\r?\n", "",
+                                       text, flags=re.S)
+            return found
+
+        collection.search = abridged
+        self.backend._collection = lambda _c: collection
+        return collection
+
+    def fetched(self):
+        return self.backend.fetch_events(
+            self.calendar, self.now - timedelta(days=2),
+            self.now + timedelta(days=30))
+
+    def test_the_reminder_survives_an_abridged_query(self):
+        self.with_alarm(minutes=10)
+        self.blind_the_query()
+        found = self.fetched()
+        self.assertEqual(len(found), 1)
+        self.assertEqual([a.minutes_before for a in found[0].alarms], [10],
+                         "the reminder was lost with the abridged copy")
+
+    def test_several_events_keep_theirs(self):
+        for index, minutes in enumerate((5, 15, 30)):
+            self.with_alarm(f"Event {index}", minutes)
+        self.blind_the_query()
+        found = self.fetched()
+        self.assertEqual(len(found), 3)
+        self.assertEqual(sorted(a.minutes_before for e in found for a in e.alarms),
+                         [5, 15, 30])
+
+    def test_the_rest_of_the_event_is_unharmed(self):
+        self.with_alarm()
+        self.blind_the_query()
+        event = self.fetched()[0]
+        self.assertEqual(event.summary, "Standup")
+        self.assertTrue(event.href)
+        self.assertTrue(event.raw_ics)
+
+    def test_an_event_with_no_reminder_stays_that_way(self):
+        self.backend.save_event(self.calendar, self.make("Plain"))
+        self.blind_the_query()
+        self.assertEqual(self.fetched()[0].alarms, [])
+
+    def test_a_server_that_refuses_multiget_still_works(self):
+        """It must degrade to the query's own copy, not to nothing."""
+        self.backend.save_event(self.calendar, self.make("Plain"))
+        collection = self.blind_the_query()
+        collection.calendar_multiget = lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("no multiget here"))
+        found = self.fetched()
+        self.assertEqual([e.summary for e in found], ["Plain"])
+
+    def test_batching_covers_every_resource(self):
+        """More resources than fit in one multiget request."""
+        from kairos.backends import caldav_backend
+        for index in range(7):
+            self.with_alarm(f"Event {index}", 10)
+        self.blind_the_query()
+        original = caldav_backend.MULTIGET_BATCH
+        caldav_backend.MULTIGET_BATCH = 2      # force several batches
+        try:
+            found = self.fetched()
+        finally:
+            caldav_backend.MULTIGET_BATCH = original
+        self.assertEqual(len(found), 7)
+        self.assertTrue(all(e.alarms for e in found),
+                        "a batch boundary dropped some reminders")

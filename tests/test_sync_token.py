@@ -183,3 +183,92 @@ class RepairingACacheAlreadySpoiled(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RefetchingAfterAFetchFix(unittest.TestCase):
+    """A cached copy is only as good as the code that fetched it.
+
+    A change-token says "the server has not changed", which stays true and
+    unhelpful when the bug was on our side. FETCH_VERSION clears the tokens
+    once so the next sync downloads the events properly, without anyone
+    having to be told to delete a cache.
+    """
+
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp(prefix="kairos-refetch-"))
+        self.path = self.directory / "cache.db"
+
+    def seed(self, storage, token="tok"):
+        from kairos.models import Calendar as C
+        storage.save_calendar(C(id="cal", account_id="acct", name="NAS",
+                                colour="#3584e4", url="https://nas/c/",
+                                sync_token=token))
+        moment = datetime.now(tz=local_timezone())
+        storage.save_event(Event.new("cal", moment,
+                                     moment + timedelta(hours=1), "Cached"))
+
+    def stored_version(self, storage):
+        row = storage._connection.execute(
+            "SELECT value FROM meta WHERE key = 'fetch_version'").fetchone()
+        return int(row["value"]) if row else 0
+
+    def test_an_old_cache_has_its_tokens_cleared(self):
+        storage = Storage(self.path)
+        self.seed(storage)
+        storage._connection.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('fetch_version', '1')")
+        storage._connection.commit()
+        storage.close()
+
+        reopened = Storage(self.path)
+        try:
+            self.assertEqual([c.sync_token for c in reopened.list_calendars()], [""])
+        finally:
+            reopened.close()
+
+    def test_the_events_are_left_alone_meanwhile(self):
+        """Nothing should vanish before the replacements arrive."""
+        storage = Storage(self.path)
+        self.seed(storage)
+        storage._connection.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('fetch_version', '1')")
+        storage._connection.commit()
+        storage.close()
+
+        reopened = Storage(self.path)
+        try:
+            self.assertEqual(reopened.count_events("cal"), 1)
+        finally:
+            reopened.close()
+
+    def test_it_only_happens_once(self):
+        storage = Storage(self.path)
+        self.seed(storage)
+        storage._connection.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('fetch_version', '1')")
+        storage._connection.commit()
+        storage.close()
+
+        first = Storage(self.path)
+        from kairos.storage import FETCH_VERSION
+        self.assertEqual(self.stored_version(first), FETCH_VERSION)
+        # A token earned after the refetch must survive the next start.
+        for calendar in first.list_calendars():
+            calendar.sync_token = "fresh"
+            first.save_calendar(calendar)
+        first.close()
+
+        again = Storage(self.path)
+        try:
+            self.assertEqual([c.sync_token for c in again.list_calendars()],
+                             ["fresh"], "the refetch ran a second time")
+        finally:
+            again.close()
+
+    def test_a_new_cache_is_stamped_and_not_disturbed(self):
+        storage = Storage(self.path)
+        try:
+            from kairos.storage import FETCH_VERSION
+            self.assertEqual(self.stored_version(storage), FETCH_VERSION)
+        finally:
+            storage.close()

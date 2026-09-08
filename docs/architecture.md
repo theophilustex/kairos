@@ -254,6 +254,24 @@ the handler runs, libdbusmenu discards the error, and the menu draws perfectly
 while doing nothing. `tests/test_background.py` therefore asserts on the
 *declaration*, not just the handler.
 
+**A calendar-query may return less of an event than the event contains.**
+RFC 4791 lets a server put an abridged `calendar-data` in a `calendar-query`
+response, and Synology's leaves out the `VALARM` components. Nothing about
+the result looks wrong — the events are all there, correct in every other
+field, simply with no reminders in them. `fetch_events` therefore uses the
+query only to find *which* resources are in range, and gets the bodies from
+a `calendar-multiget`, which is the request that means "give me these,
+entire". It falls back to the query's own copy, then to a `GET` per
+resource, so a server that refuses multiget is no worse off.
+
+**A cached copy is only as good as the code that fetched it.**
+`FETCH_VERSION` in `storage.py` exists for exactly that: when a fix means
+the events already in the cache are wrong, raising it clears every
+change-token once so the next sync refetches. A change-token cannot know
+our fetching has been corrected — it answers "has the *server* changed?",
+which stays true and unhelpful. Without this, a fetch fix reaches nobody
+who already synced.
+
 **A change-token is only true once the work behind it is done.** A CalDAV
 server's ctag means "nothing has changed since this", and `_sync_account`
 stores it so the next sync can skip the download. It must be stored *after*

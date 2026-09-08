@@ -49,8 +49,11 @@ The dialog says why, in words rather than in HTTP codes. The common ones:
 | Synology Calendar | `https://your-nas:5001/caldav/` (see the note below) |
 | iCloud | `https://caldav.icloud.com/` (needs an app-specific password) |
 
-**Synology.** Its CalDAV does not answer a `calendar-query` REPORT the way
-most servers do, so a client that relies on one finds your calendars and
+**Synology.** Two of its CalDAV quirks are worked around. Its
+`calendar-query` returns an abridged copy of each event with the reminders
+stripped out, so event bodies are fetched with a `calendar-multiget`
+instead. And its REPORT support does not answer a plain query the way most
+servers do, so a client that relies on one finds your calendars and
 then shows them all as empty. Kairos falls back to listing the collection
 and reading each event, which needs no REPORT. If a Synology calendar still
 looks empty, run `kairos --diagnose` (see

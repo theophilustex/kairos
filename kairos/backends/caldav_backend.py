@@ -41,6 +41,11 @@ from kairos.security import (
 
 log = logging.getLogger(__name__)
 
+#: How many resources to ask for in one calendar-multiget. Large enough that
+#: an ordinary calendar takes one or two requests, small enough not to build
+#: a request some server decides is too long.
+MULTIGET_BATCH = 75
+
 #: WebDAV property holding a collection's "has anything changed?" token.
 CTAG_PROPERTY = "{http://calendarserver.org/ns/}getctag"
 ETAG_PROPERTY = "{DAV:}getetag"
@@ -352,10 +357,16 @@ class CalDAVBackend(Backend):
             results = self._list_the_hard_way(collection, calendar)
 
         etags = self._etags_in(collection)
+        # The calendar-query above is allowed to return an *abridged* copy of
+        # each resource, and Synology's leaves the VALARMs out of it — so
+        # every reminder vanished while everything else looked perfectly
+        # right. calendar-multiget asks for the resources by name and returns
+        # them whole, so that is what the event bodies come from.
+        bodies = self._bodies_by_multiget(collection, results, calendar)
 
         events: list[Event] = []
         for item in results:
-            text = self._data_of(item)
+            text = bodies.get(_path_of(str(item.url))) or self._data_of(item)
             if not text:
                 continue
             if len(text) > MAX_RESPONSE_BYTES:
@@ -412,6 +423,39 @@ class CalDAVBackend(Backend):
                      "listing the collection found %d resource(s)",
                      calendar.name, len(found))
         return found
+
+    def _bodies_by_multiget(self, collection, items, calendar: Calendar) -> dict[str, str]:
+        """Whole event bodies, keyed by resource path.
+
+        One extra REPORT per batch, which is worth it: a calendar-query may
+        legitimately return less of a resource than the resource contains,
+        and there is no way to tell from the outside that it has done so. A
+        multiget is the request that means "give me these, entire".
+
+        Returns what it managed to collect; anything missing falls back to
+        the calendar-query's own copy, so a server that refuses multiget is
+        no worse off than before.
+        """
+        urls = [item.url for item in items if getattr(item, "url", None) is not None]
+        bodies: dict[str, str] = {}
+
+        for index in range(0, len(urls), MULTIGET_BATCH):
+            batch = urls[index:index + MULTIGET_BATCH]
+            try:
+                found = collection.calendar_multiget(batch)
+            except Exception as exc:
+                log.debug("%s: multiget of %d resource(s) failed (%s)",
+                          calendar.name, len(batch), exc)
+                continue
+            for entry in found:
+                text = getattr(entry, "data", None)
+                if text and getattr(entry, "url", None) is not None:
+                    bodies[_path_of(str(entry.url))] = text
+
+        if bodies:
+            log.debug("%s: %d/%d bodies came from multiget",
+                      calendar.name, len(bodies), len(urls))
+        return bodies
 
     @staticmethod
     def _data_of(item) -> str:

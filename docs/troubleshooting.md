@@ -10,16 +10,23 @@ kairos --debug
 
 ## My events have no reminders on them
 
-Check first whether the reminders exist in the data at all. Kairos reads
-VALARM components and always has; what it cannot do is show a reminder the
-server never sent. Some servers keep reminders in their own web interface
-and put nothing into the event.
+**If you are on a Synology NAS, update.** Its CalDAV answers a
+`calendar-query` with an abridged copy of each event that leaves the
+reminders out, so every event arrived correct in every other respect and
+with nothing to remind you. Kairos now fetches event bodies with a
+`calendar-multiget` instead, and clears its change-tokens once on start so
+everything already cached is downloaded again. Nothing to delete by hand;
+the first sync after updating takes a little longer.
 
-`kairos --debug` will show what arrived. If the events genuinely carry no
-reminder, set one for the whole calendar: **Calendars**
-(<kbd>Ctrl</kbd>+<kbd>L</kbd>), the alarm button on the row. It applies to
-every event in that calendar without a reminder of its own. See
-[the user guide](user-guide.md#when-your-server-sends-no-reminders).
+If reminders are still missing after that, check whether they exist in the
+data at all — Kairos can read a VALARM but cannot invent one the server
+never sends. Some servers keep reminders only in their own web interface.
+`kairos --debug` shows what arrived.
+
+When the events genuinely carry no reminder, set one for the whole calendar:
+**Calendars** (<kbd>Ctrl</kbd>+<kbd>L</kbd>), the alarm button on the row.
+It applies to every event in that calendar without a reminder of its own.
+See [the user guide](user-guide.md#when-your-server-sends-no-reminders).
 
 ---
 
