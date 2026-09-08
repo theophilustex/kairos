@@ -153,8 +153,16 @@ class SyncManager(GObject.Object):
     # Writing (cache first, server second)
     # ------------------------------------------------------------------
 
-    def save_event(self, event: Event) -> None:
-        """Store an event locally and push it in the background."""
+    def save_event(self, event: Event, *, moved_from: str | None = None) -> None:
+        """Store an event locally and push it in the background.
+
+        ``moved_from`` is the calendar it used to be in, when the user has
+        changed that. See :meth:`_move_event` — it is not an ordinary edit.
+        """
+        if moved_from and moved_from != event.calendar_id:
+            self._move_event(event, moved_from)
+            return
+
         calendar = self.storage.get_calendar(event.calendar_id)
         if calendar is None:
             log.error("refusing to save event into unknown calendar %s", event.calendar_id)
@@ -204,6 +212,38 @@ class SyncManager(GObject.Object):
         self.emit("events-changed")
         self._run_in_background(self._push_pending, "deleting the event")
 
+    def _move_event(self, event: Event, moved_from: str) -> None:
+        """Put an event into a different calendar.
+
+        In CalDAV an event *is* a resource inside a collection, so changing
+        its calendar is not an edit — it is a create in the new collection
+        and a delete from the old. Saving it to the new one while leaving the
+        old resource where it was is what used to leave a second copy behind:
+        the PUT went to the stale href, in the old calendar, and the cache
+        gained a row under the new one.
+
+        Created first, deleted second. That way a failure leaves a duplicate,
+        which the next sync tidies up, rather than a hole where the event was.
+        """
+        original = self.storage.get_event(moved_from, event.uid)
+
+        if original is not None and not self.deleting_allowed():
+            # Half a move is worse than none: the old copy would stay for
+            # ever and there would be two of everything moved.
+            log.info("refusing to move %s: deletion is switched off", event.uid)
+            self.emit("sync-finished", False,
+                      "Moving an event to another calendar has to remove it "
+                      "from the old one, and deleting is switched off in "
+                      "Preferences → Sync & security.")
+            return
+
+        # A fresh resource in the new collection: the old href and etag
+        # describe somewhere this event no longer lives.
+        self.save_event(replace(event, href=None, etag=None, sequence=0,
+                                raw_ics=""))
+        if original is not None:
+            self.delete_event(original)
+
     # ------------------------------------------------------------------
     # One occurrence of a repeating series
     # ------------------------------------------------------------------
@@ -223,8 +263,19 @@ class SyncManager(GObject.Object):
                         scope: str) -> None:
         """Apply an edit to one occurrence, the rest of the series, or all."""
         original = occurrence.event
+        moved_from = original.calendar_id if edited.calendar_id != original.calendar_id else None
+
         if scope == self.ALL_EVENTS or not self._is_one_of_a_series(occurrence):
-            self.save_event(edited)
+            self.save_event(edited, moved_from=moved_from)
+            return
+
+        if moved_from and scope == self.THIS_EVENT:
+            # An override lives inside the old series' own document, which is
+            # in the old calendar — there is nowhere in it to say "and this
+            # one is somewhere else". Taking the occurrence out of the series
+            # and writing it as its own event in the new calendar is what the
+            # user asked for, expressed in what iCalendar can actually say.
+            self._move_one_occurrence(occurrence, edited)
             return
 
         from kairos import ical
@@ -277,6 +328,35 @@ class SyncManager(GObject.Object):
                         "deleting the series instead", original.uid, exc)
             self.delete_event(original)
             return
+        self._save_series_text(original, text)
+
+    def _move_one_occurrence(self, occurrence: Occurrence, edited: Event) -> None:
+        """Take one occurrence out of its series and into another calendar."""
+        from kairos import ical
+        from kairos.models import new_uid
+
+        original = occurrence.event
+        if not self.deleting_allowed():
+            log.info("refusing to move an occurrence of %s: deletion is "
+                     "switched off", original.uid)
+            self.emit("sync-finished", False,
+                      "Moving one occurrence has to remove it from the old "
+                      "calendar's series, and deleting is switched off in "
+                      "Preferences → Sync & security.")
+            return
+
+        try:
+            text = ical.exclude_occurrence(
+                original.raw_ics or ical.to_ical_text(original),
+                occurrence.recurrence_id)
+        except ical.ParseError as exc:
+            log.warning("cannot take %s out of its series (%s); moving the "
+                        "whole thing instead", original.uid, exc)
+            self.save_event(edited, moved_from=original.calendar_id)
+            return
+
+        self.save_event(replace(edited, uid=new_uid(), href=None, etag=None,
+                                sequence=0, raw_ics="", rrule=""))
         self._save_series_text(original, text)
 
     def _truncate(self, occurrence: Occurrence) -> tuple[bool, int | None]:

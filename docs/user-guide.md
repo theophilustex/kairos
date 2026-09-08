@@ -153,7 +153,12 @@ browser. Only `http` and `https` links are ever offered; see
 The editor has:
 
 - **Title**, **Location**, **Link** and **Notes**
-- **Calendar** — which calendar it belongs to. Read-only calendars are not offered.
+- **Calendar** — which calendar it belongs to. Read-only calendars are not
+  offered. Changing it *moves* the event: it is written to the new calendar
+  and removed from the old, keeping the same identity. Moving one occurrence
+  of a repeating event takes that date out of the series and makes it an
+  event of its own. A move needs *Allow deleting events* to be on, since it
+  has to remove the event from the calendar it left.
 - **All day** — hides the times and switches to whole days. The end date shown
   is the last day the event covers, which is what people mean, even though
   iCalendar stores it differently underneath.

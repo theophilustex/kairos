@@ -861,3 +861,83 @@ class AnAbridgedCalendarQuery(CalDAVServerTestCase):
         self.assertEqual(len(found), 7)
         self.assertTrue(all(e.alarms for e in found),
                         "a batch boundary dropped some reminders")
+
+
+class MovingBetweenCollections(CalDAVServerTestCase):
+    """A calendar change against a real server.
+
+    Reported as "it creates a copy of that event rather than just updating
+    it". The PUT went to the href the event already had — in the *old*
+    collection — so the old resource was updated in place and a second row
+    appeared in the cache under the new calendar.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        import caldav
+        client = caldav.DAVClient(url=cls.base, username="tester",
+                                  password="secret123")
+        try:
+            client.principal().make_calendar(name="Other")
+        except Exception:
+            pass
+
+    def setUp(self):
+        super().setUp()
+        found = {c.name: c for c in self.backend.discover_calendars()}
+        self.home = found["Home"]
+        self.other = found["Other"]
+
+    def tearDown(self):
+        for calendar in (self.home, self.other):
+            for event in self.backend.fetch_events(
+                    calendar, self.now - timedelta(days=400),
+                    self.now + timedelta(days=400)):
+                self.backend.delete_event(calendar, event)
+
+    def contents(self, calendar):
+        return [e.summary for e in self.backend.fetch_events(
+            calendar, self.now - timedelta(days=2), self.now + timedelta(days=30))]
+
+    def test_a_move_leaves_one_copy_on_the_server(self):
+        saved = self.backend.save_event(self.home, self.make("Dentist"))
+        self.assertEqual(self.contents(self.home), ["Dentist"])
+
+        # What a move does: create in the new collection, delete from the old.
+        from dataclasses import replace
+        moved = replace(saved, calendar_id=self.other.id, href=None,
+                        etag=None, sequence=0, raw_ics="")
+        self.backend.save_event(self.other, moved)
+        self.backend.delete_event(self.home, saved)
+
+        self.assertEqual(self.contents(self.home), [])
+        self.assertEqual(self.contents(self.other), ["Dentist"])
+
+    def test_writing_with_the_old_href_is_what_caused_the_copy(self):
+        """Kept as the record of the bug: the stale href wins over the collection."""
+        saved = self.backend.save_event(self.home, self.make("Dentist"))
+        from dataclasses import replace
+        # The old behaviour: change the calendar but keep href and etag.
+        naive = replace(saved, calendar_id=self.other.id, raw_ics="")
+        self.backend.save_event(self.other, naive)
+
+        self.assertEqual(self.contents(self.home), ["Dentist"],
+                         "the PUT should have landed back in the old collection")
+        self.assertEqual(self.contents(self.other), [],
+                         "and nothing should have reached the new one")
+
+    def test_the_moved_event_keeps_its_uid(self):
+        saved = self.backend.save_event(self.home, self.make("Dentist"))
+        from dataclasses import replace
+        moved = replace(saved, calendar_id=self.other.id, href=None,
+                        etag=None, sequence=0, raw_ics="")
+        written = self.backend.save_event(self.other, moved)
+        self.backend.delete_event(self.home, saved)
+
+        found = self.backend.fetch_events(
+            self.other, self.now - timedelta(days=2), self.now + timedelta(days=30))
+        self.assertEqual(found[0].uid, saved.uid)
+        self.assertTrue(written.href.rstrip("/").rsplit("/", 2)[-2] !=
+                        saved.href.rstrip("/").rsplit("/", 2)[-2],
+                        "the new resource should be in a different collection")

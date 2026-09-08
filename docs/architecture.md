@@ -263,6 +263,15 @@ running it, so a green suite does not by itself say the shipped bundle
 behaves the same. When changing `caldav_backend.py`, run the suite against
 the bundle too; `requirements.txt` says how.
 
+**Changing an event's calendar is not an edit.** In CalDAV an event *is* a
+resource inside a collection, so moving it means creating it in the new
+collection and deleting it from the old — `SyncManager._move_event`. Saving
+it the obvious way instead left two: the PUT went to the href the event
+already had, which is in the *old* collection, while the cache gained a row
+under the new `calendar_id`, and `events` is keyed by
+`(calendar_id, uid)`. The create happens first, so a failure leaves a
+duplicate the next sync tidies rather than a hole where the event was.
+
 **A calendar-query may return less of an event than the event contains.**
 RFC 4791 lets a server put an abridged `calendar-data` in a `calendar-query`
 response, and Synology's leaves out the `VALARM` components. Nothing about
