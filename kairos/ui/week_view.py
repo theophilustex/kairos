@@ -64,10 +64,12 @@ RESIZE_GRIP_SHARE = 1 / 3
 #: than a click.
 DRAG_THRESHOLD_PIXELS = 4
 
-#: What a drag snaps to.  The grid draws fifteen-minute rows, but an event
-#: can start anywhere inside one (see :meth:`WeekView._fill_day`), so there
-#: is no reason to make people schedule on the quarter hour.
-DRAG_SNAP_MINUTES = 5
+#: What a drag snaps to.  A block can be *drawn* at any minute (see
+#: :meth:`WeekView._placement`, which is what lets a 9:05 meeting from a
+#: server appear at 9:05), so this is not a limit of the grid — it is a
+#: judgement about the gesture.  Five-minute steps made a drag fiddly to
+#: land where you meant, and almost nobody schedules on the odd five.
+DRAG_SNAP_MINUTES = 15
 
 #: The shortest an event can be dragged down to.
 MIN_EVENT_MINUTES = 5

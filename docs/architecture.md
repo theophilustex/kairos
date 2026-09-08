@@ -309,7 +309,9 @@ awkward cases — dragging past midnight, shrinking an event to nothing,
 dragging an all-day banner that has no time to change — are tested without a
 pointer. It works in minutes rather than rows, because a block is placed by
 rows *plus a margin* and so can start at any minute; that also fixed events
-at 9:05 being drawn at 9:00.
+at 9:05 being drawn at 9:00. What a drag *snaps* to is a separate decision
+(`DRAG_SNAP_MINUTES`, a quarter of an hour) about the gesture, not a limit
+of the grid.
 
 **Why is the week grid made of rows rather than pixels?** Each day is a
 `Gtk.Grid` of fifteen-minute rows, and an event is attached spanning the rows

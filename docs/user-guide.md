@@ -104,7 +104,7 @@ week is cut off at it. Where bars overlap they stack, longest at the top.
 
 **Drag a block** to move an event, or pull its bottom edge to change when it
 ends. Drag sideways to put it on another day, and up or down to change the
-time — as far as you like, in five-minute steps. An all-day banner can be
+time — as far as you like, in quarter-hour steps. An all-day banner can be
 dragged between days too.
 
 While you drag, the event you picked up dims and a dashed outline shows

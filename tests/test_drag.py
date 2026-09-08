@@ -252,26 +252,30 @@ class DraggingFreely(unittest.TestCase):
         self.assertEqual(start.hour, 14)
 
     def test_every_distance_is_honoured(self):
-        for minutes, expected in ((5, "09:05"), (30, "09:30"), (120, "11:00"),
+        for minutes, expected in ((15, "09:15"), (30, "09:30"), (120, "11:00"),
                                   (7 * 60, "16:00"), (13 * 60, "22:00")):
             with self.subTest(minutes=minutes):
                 start, _ = dragged_times(occurrence(9, 10), minutes=minutes,
                                          days=0, resizing=False)
                 self.assertEqual(start.strftime("%H:%M"), expected)
 
-    def test_it_is_not_limited_to_the_quarter_hour(self):
-        """The grid draws quarter hours; an event may start between them."""
+    def test_the_arithmetic_itself_is_not_limited_to_the_quarter_hour(self):
+        """Dragging snaps, but the placement maths does not have to.
+
+        A server may put an event at 9:05 and it is drawn at 9:05; the snap
+        is a decision about the gesture, not a limit of the grid.
+        """
         start, _ = dragged_times(occurrence(9, 10), minutes=5, days=0,
                                  resizing=False)
         self.assertEqual(start.strftime("%H:%M"), "09:05")
 
-    def test_the_snap_is_five_minutes(self):
-        self.assertEqual(DRAG_SNAP_MINUTES, 5)
+    def test_the_snap_is_a_quarter_of_an_hour(self):
+        self.assertEqual(DRAG_SNAP_MINUTES, 15)
 
-    def test_a_short_event_can_be_resized_finely(self):
-        _, end = dragged_times(occurrence(9, 10), minutes=5, days=0,
+    def test_a_resize_moves_in_the_same_steps(self):
+        _, end = dragged_times(occurrence(9, 10), minutes=15, days=0,
                                resizing=True)
-        self.assertEqual(end.strftime("%H:%M"), "10:05")
+        self.assertEqual(end.strftime("%H:%M"), "10:15")
 
 
 class DraggingAcrossDays(unittest.TestCase):
@@ -405,3 +409,45 @@ class BlockPlacement(unittest.TestCase):
                 _, top, span, bottom = self.place(minute, row_height=12)
                 self.assertGreaterEqual(bottom, 0)
                 self.assertLessEqual(top + bottom, span * 12)
+
+
+class WhatADragSnapsTo(unittest.TestCase):
+    """The step the pointer actually moves in.
+
+    `dragged_times` is given a number of minutes; this is the part that
+    decides what that number can be. Five-minute steps made a drag fiddly to
+    land where you meant, so it is a quarter of an hour.
+    """
+
+    def view(self, hour_height=48):
+        view = WeekView.__new__(WeekView)
+        view._row_height = lambda: max(1, hour_height // 4)
+        return view
+
+    def snap(self, pixels, hour_height=48):
+        return self.view(hour_height)._snapped_minutes(pixels)
+
+    def test_an_hour_of_travel_is_an_hour(self):
+        self.assertEqual(self.snap(48), 60)
+
+    def test_every_result_is_a_whole_number_of_steps(self):
+        for pixels in range(-200, 201, 3):
+            with self.subTest(pixels=pixels):
+                self.assertEqual(self.snap(pixels) % DRAG_SNAP_MINUTES, 0)
+
+    def test_a_small_movement_snaps_to_nothing(self):
+        self.assertEqual(self.snap(1), 0)
+
+    def test_it_rounds_to_the_nearest_step_not_downwards(self):
+        # Ten pixels is 12.5 minutes at the default height: nearer 15 than 0.
+        self.assertEqual(self.snap(10), 15)
+
+    def test_it_works_upwards_too(self):
+        self.assertEqual(self.snap(-48), -60)
+
+    def test_a_denser_grid_still_snaps_the_same(self):
+        """The step is in minutes, not pixels, so zoom must not change it."""
+        for height in (24, 48, 96, 160):
+            with self.subTest(hour_height=height):
+                self.assertEqual(self.snap(height, height), 60)
+                self.assertEqual(self.snap(height // 2, height), 30)
