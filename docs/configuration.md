@@ -205,6 +205,9 @@ These are stable; treat them as the styling API.
 | `.kairos-hour-row` | An hour rule in the week grid. |
 | `.kairos-day-column` | One day column in the week grid. |
 | `.kairos-now-line` | The current-time line. |
+| `.kairos-slot-selection` | The slot a click picked, awaiting a second click. |
+| `.kairos-drop-indicator` | Where a dragged event would land. |
+| `.kairos-dragging` | The event being dragged. |
 | `.kairos-agenda-day` | A day heading in the agenda view. Also `.today`. |
 | `.kairos-agenda-row` | One event row in the agenda. |
 | `.kairos-agenda-time` | The time column in the agenda. |
@@ -232,6 +235,18 @@ both light and dark.
 
 A syntax error in your CSS is logged and the offending rule ignored; it will
 not stop Kairos from starting.
+
+---
+
+## A reminder for a whole calendar
+
+Not a setting in `settings.json` — it belongs to the calendar, so it lives in
+the cache database beside it, and it is reachable from **Calendars**
+(<kbd>Ctrl</kbd>+<kbd>L</kbd>) with the alarm button on each row.
+
+It applies only to events with no reminder of their own, and is never written
+back to the server. See
+[the user guide](user-guide.md#when-your-server-sends-no-reminders).
 
 ---
 

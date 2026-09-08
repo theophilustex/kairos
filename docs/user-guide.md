@@ -65,7 +65,9 @@ simply start typing in the calendar window.
 
 Results replace the calendar while you search, each showing the calendar's
 colour, the date, the title, and the time, place and calendar underneath.
-Click one to jump to its day and open it. <kbd>Escape</kbd> closes the search
+Click one to jump to its day **in the week view** and open it — a result is a
+particular event at a particular time, and the week shows it at that time
+with the rest of the day around it. <kbd>Escape</kbd> closes the search
 and puts you back in the view you came from.
 
 Search covers an event's **title, location and notes**. A repeating event is
@@ -129,9 +131,16 @@ to that day.
 
 ## Creating and editing events
 
-**To create one**: press **+**, or <kbd>Ctrl</kbd>+<kbd>N</kbd>, or
-double-click a day in the month view or a time in the week view. Double-clicking
-puts the event where you clicked.
+**To create one**: press **+**, or <kbd>Ctrl</kbd>+<kbd>N</kbd>, or click an
+empty part of the grid.
+
+Clicking empty space **picks** that slot rather than creating there straight
+away: an outline appears showing exactly where and how long a new event would
+be, and clicking it again creates it. One click is not enough on its own —
+the pointer lands somewhere approximate, and an event appearing silently at a
+time nobody chose is worse than one more click. A **double-click** skips the
+wait. Clicking a different slot moves the choice; changing week or month
+forgets it.
 
 **To open one**: click it. A bubble appears with the details and **Edit** and
 **Delete**. If the event has a link — in its **Link** field, its location, or
@@ -206,6 +215,21 @@ is very easy to miss. The window stays until you answer it:
 - **Show in calendar** — opens Kairos on that day.
 
 Reminders that fall due together share one window rather than opening several.
+
+### When your server sends no reminders
+
+Some servers — Synology's among them — keep reminders in their own web
+interface and never put one into the event itself. Kairos reads every
+reminder a server *does* send, but it cannot show one that was never there,
+so a whole calendar can arrive with nothing to remind you about.
+
+**Calendars** (<kbd>Ctrl</kbd>+<kbd>L</kbd>) has an alarm button beside each
+calendar for exactly this: choose an offset and every event in that calendar
+*that carries no reminder of its own* gets it. An event with its own reminder
+is left alone. The detail bubble shows where such a reminder came from, and
+the choice is kept on this machine — it is never written back to the server,
+because it is a preference about how you want to be told rather than a
+correction to somebody else's data.
 
 If you would rather have notifications alone, turn off *Show an alert window*
 in **Preferences → Reminders**. That page also has **Send a test reminder**,

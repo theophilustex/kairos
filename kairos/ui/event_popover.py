@@ -34,7 +34,7 @@ class EventPopover(Gtk.Popover):
     }
 
     def __init__(self, occurrence: Occurrence, calendar_name: str, calendar_colour: str,
-                 *, editable: bool = True) -> None:
+                 *, editable: bool = True, calendar_alarm: object = None) -> None:
         super().__init__()
         self.occurrence = occurrence
         self.set_autohide(True)
@@ -68,6 +68,13 @@ class EventPopover(Gtk.Popover):
         if occurrence.event.alarms:
             reminders = ", ".join(alarm.label() for alarm in occurrence.event.alarms)
             box.append(self._meta_row("alarm-symbolic", reminders))
+        elif calendar_alarm is not None:
+            # Say where it came from. A reminder appearing on an event that
+            # plainly has none would look like a bug, and knowing it is the
+            # calendar's is what tells you where to go and change it.
+            box.append(self._meta_row(
+                "alarm-symbolic",
+                f"{calendar_alarm.label()} · from this calendar"))
 
         if occurrence.event.description:
             separator = Gtk.Separator()

@@ -72,6 +72,11 @@ DRAG_SNAP_MINUTES = 5
 #: The shortest an event can be dragged down to.
 MIN_EVENT_MINUTES = 5
 
+#: What clicking an empty part of the grid snaps to. Coarser than a drag:
+#: a click is a rougher gesture, and a quarter past is a likelier thing to
+#: mean than seven minutes past.
+SLOT_SNAP_MINUTES = 15
+
 MINUTES_PER_DAY = 24 * 60
 
 
@@ -193,6 +198,9 @@ class WeekView(Gtk.Box):
         self._day_grids: list[Gtk.Grid] = []
         self._drag: dict = {}
         self._indicator: Gtk.Widget | None = None
+        #: The slot a first click picked, waiting for a second to confirm it.
+        self._slot: tuple[date, int] | None = None
+        self._slot_widget: Gtk.Widget | None = None
         self._calendar_cache = None
         self._now_line: Gtk.Widget | None = None
         self._scrolled_once = False
@@ -346,15 +354,79 @@ class WeekView(Gtk.Box):
             self._day_grids.append(grid)
 
     def _on_column_click(self, grid: Gtk.Grid, n_press: int, _x: float, y: float) -> None:
-        """Clicking empty space in a column selects (or creates) that time."""
+        """Clicking empty space picks a time; clicking it again creates there.
+
+        One click is not enough on its own — the pointer lands somewhere
+        approximate, and an event silently appearing at a time nobody chose
+        is worse than one more click. So the first click shows exactly the
+        slot a new event would fill, and the second confirms it. A
+        double-click skips the wait, which is what people used to it expect.
+        """
         day: date = grid.day  # type: ignore[attr-defined]
         row = int(y // max(1, self._row_height()))
         minutes = min(ROWS_PER_DAY - 1, max(0, row)) * MINUTES_PER_ROW
+        minutes -= minutes % SLOT_SNAP_MINUTES
         moment = start_of_day(day) + timedelta(minutes=minutes)
+
         self._anchor = day
         self.emit("date-selected", day)
-        if n_press >= 2:
+
+        if n_press >= 2 or self._slot == (day, minutes):
+            self.clear_slot()
             self.emit("create-requested", moment)
+            return
+
+        self._slot = (day, minutes)
+        self._show_slot()
+
+    # -- the pending "new event here" slot -----------------------------
+
+    def clear_slot(self) -> None:
+        """Forget the highlighted slot, and take its highlight down."""
+        self._slot = None
+        if self._slot_widget is not None and self._slot_widget.get_parent() is not None:
+            self._slot_widget.get_parent().remove(self._slot_widget)
+        self._slot_widget = None
+
+    def _show_slot(self) -> None:
+        """Outline the slot a new event would occupy.
+
+        Sized to the length a new event actually gets, so the highlight is a
+        preview rather than a marker — you can see it is an hour before you
+        commit to it.
+        """
+        chosen = self._slot
+        self.clear_slot()
+        self._slot = chosen
+        if chosen is None:
+            return
+        day, minutes = chosen
+        column = (day - self._first_day).days
+        if not 0 <= column < len(self._day_grids):
+            return
+
+        row_height = self._row_height()
+        length = max(SLOT_SNAP_MINUTES,
+                     settings.get_int("default_event_duration_minutes"))
+        start_row = minutes // MINUTES_PER_ROW
+        top = round((minutes % MINUTES_PER_ROW) / MINUTES_PER_ROW * row_height)
+        height = max(MIN_BLOCK_PIXELS, round(length / MINUTES_PER_ROW * row_height))
+        span = max(1, min(-(-(top + height) // max(1, row_height)),
+                          ROWS_PER_DAY - start_row))
+
+        label = Gtk.Label(label=formatting.format_time(
+            start_of_day(day) + timedelta(minutes=minutes)), xalign=0.5)
+        label.set_ellipsize(3)
+        label.set_hexpand(True)
+        label.set_valign(Gtk.Align.CENTER)
+        widget = Gtk.Box()
+        widget.append(label)
+        widget.add_css_class("kairos-slot-selection")
+        widget.set_margin_top(top)
+        widget.set_margin_bottom(max(0, span * row_height - top - height))
+        self._day_grids[column].attach(widget, 0, start_row,
+                                       MAX_OVERLAP_COLUMNS, span)
+        self._slot_widget = widget
 
     # ------------------------------------------------------------------
     # Filling in
@@ -362,6 +434,8 @@ class WeekView(Gtk.Box):
 
     def refresh(self) -> None:
         self._calendar_cache = None      # colours and read-only flags may have moved
+        chosen, self._slot_widget = self._slot, None
+        self._slot = None
         self._build_gutter()
         self._build_columns()
         self._build_headings()
@@ -378,6 +452,12 @@ class WeekView(Gtk.Box):
             day = self._first_day + timedelta(days=offset)
             timed = [o for o in by_day.get(day, []) if not self._is_banner(o)]
             self._fill_day(grid, day, timed, colours)
+
+        # The grids were rebuilt, so the old highlight widget is gone; put a
+        # fresh one back if the choice it stood for is still on screen.
+        if chosen is not None:
+            self._slot = chosen
+            self._show_slot()
 
         self._draw_now_line()
         if not self._scrolled_once and settings.get_bool("week_starts_scrolled_to_now"):

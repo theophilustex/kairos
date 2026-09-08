@@ -289,3 +289,37 @@ class UndoingADelete(OpeningASearchResult):
         self.sync.restore_event(before)
         self.assertIsNotNone(
             self.sync.storage.get_event(self.calendar.id, self.event.uid))
+
+
+class WhereASearchResultLands(OpeningASearchResult):
+    """The week, not whichever view you happened to search from.
+
+    A result is a specific event at a specific time. The month shows it as a
+    chip in a crowded cell; the week shows it at its real time with the rest
+    of the day around it.
+    """
+
+    def visible_view(self):
+        return self.window._stack.get_visible_child_name()
+
+    def test_it_lands_in_the_week_view(self):
+        self.window.show_view("month")
+        self.click_the_first_result()
+        self.assertEqual(self.visible_view(), "week")
+
+    def test_it_lands_there_from_the_agenda_too(self):
+        self.window.show_view("agenda")
+        self.click_the_first_result()
+        self.assertEqual(self.visible_view(), "week")
+
+    def test_it_goes_to_the_event_s_own_day(self):
+        self.window.show_view("month")
+        self.click_the_first_result()
+        self.assertEqual(self.window._current_day, self.event.start.date())
+
+    def test_the_week_shown_contains_that_day(self):
+        self.window.show_view("month")
+        self.click_the_first_result()
+        week = self.window._views["week"]
+        self.assertLessEqual(week._first_day, self.event.start.date())
+        self.assertLess(self.event.start.date(), week._first_day + timedelta(days=7))

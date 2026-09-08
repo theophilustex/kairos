@@ -351,3 +351,21 @@
 .kairos-dragging {
     opacity: 0.35;
 }
+
+/* The slot a click picked, waiting for a second click to create there.
+   Distinct from the drag indicator: dotted rather than dashed, and tinted
+   with the accent colour, because this one is a choice you have made
+   rather than a preview of where something is falling. */
+.kairos-slot-selection {
+    border: 2px dotted @accent_bg_color;
+    border-radius: 5px;
+    background-color: alpha(@accent_bg_color, 0.14);
+    margin: 1px;
+    min-height: 0;
+}
+
+.kairos-slot-selection label {
+    font-size: 0.78em;
+    font-weight: bold;
+    opacity: 0.85;
+}

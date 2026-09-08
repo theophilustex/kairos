@@ -578,6 +578,7 @@ class SyncManager(GObject.Object):
                 # server.  Renaming a calendar in Kairos is deliberate, so we
                 # do not let the server overwrite it back.
                 calendar.visible = existing.visible
+                calendar.default_alarm_minutes = existing.default_alarm_minutes
                 calendar.colour = existing.colour if existing.colour else calendar.colour
                 if existing.name:
                     calendar.name = existing.name

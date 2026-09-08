@@ -264,10 +264,20 @@ class DayCell(Gtk.Box):
     # -- input ------------------------------------------------------------
 
     def _on_click(self, n_press: int, _x: float, _y: float) -> None:
+        """First click selects the day; clicking the selected day creates.
+
+        The same two-step as the week grid, so the gesture means the same
+        thing wherever you are: one click to say where, a second to commit.
+        """
+        # Armed by a previous click *on this cell*, not merely "this day is
+        # the selected one" — arriving on a day by any other route and
+        # clicking it once would otherwise create an event immediately.
+        armed = self.view.armed_day == self.day
         self.view.select_day(self.day)
-        if n_press >= 2:
-            # Double-click on empty space starts a new event at a sensible
-            # hour rather than at midnight.
+        self.view.armed_day = None if armed else self.day
+        if n_press >= 2 or armed:
+            # A new event on a day cell has no time attached to it, so it
+            # starts at a plausible hour rather than at midnight.
             start = start_of_day(self.day) + timedelta(hours=9)
             self.view.emit("create-requested", start)
 
@@ -333,6 +343,7 @@ class MonthView(Gtk.Box):
         return self._selected
 
     def set_date(self, day: date) -> None:
+        self.armed_day = None
         self._anchor = day
         self._selected = day
         self.refresh()
@@ -393,6 +404,7 @@ class MonthView(Gtk.Box):
         table: walking off the end of the month brings the next one in rather
         than stopping dead.
         """
+        self.armed_day = None
         if day in self._cells:
             self.select_day(day)          # emits date-selected if it changed
         else:
@@ -403,6 +415,11 @@ class MonthView(Gtk.Box):
         cell = self._cells.get(day)
         if cell is not None:
             cell.grab_focus()
+
+    #: The day a click has picked, waiting for a second click to create on
+    #: it.  Cleared whenever the grid is rebuilt or the selection moves by
+    #: any other means.
+    armed_day: date | None = None
 
     def select_day(self, day: date) -> None:
         if day == self._selected:

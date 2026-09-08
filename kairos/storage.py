@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS calendars (
     url         TEXT NOT NULL DEFAULT '',
     read_only   INTEGER NOT NULL DEFAULT 0,
     visible     INTEGER NOT NULL DEFAULT 1,
-    sync_token  TEXT NOT NULL DEFAULT ''
+    sync_token  TEXT NOT NULL DEFAULT '',
+    default_alarm_minutes INTEGER NOT NULL DEFAULT -1
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -209,6 +210,13 @@ class Storage:
                 self._connection.execute(
                     f"ALTER TABLE events ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
+        on_calendars = {row["name"] for row in
+                        self._connection.execute("PRAGMA table_info(calendars)")}
+        if "default_alarm_minutes" not in on_calendars:
+            self._connection.execute(
+                "ALTER TABLE calendars ADD COLUMN default_alarm_minutes "
+                "INTEGER NOT NULL DEFAULT -1")
+
     def _backfill_search_columns(self) -> None:
         """Fill in the new columns for events cached by an older version.
 
@@ -319,8 +327,9 @@ class Storage:
             self._connection.execute(
                 """
                 INSERT INTO calendars (id, account_id, name, colour, url,
-                                       read_only, visible, sync_token)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                       read_only, visible, sync_token,
+                                       default_alarm_minutes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     account_id = excluded.account_id,
                     name       = excluded.name,
@@ -328,12 +337,13 @@ class Storage:
                     url        = excluded.url,
                     read_only  = excluded.read_only,
                     visible    = excluded.visible,
-                    sync_token = excluded.sync_token
+                    sync_token = excluded.sync_token,
+                    default_alarm_minutes = excluded.default_alarm_minutes
                 """,
                 (
                     calendar.id, calendar.account_id, calendar.name, calendar.colour,
                     calendar.url, int(calendar.read_only), int(calendar.visible),
-                    calendar.sync_token,
+                    calendar.sync_token, int(calendar.default_alarm_minutes),
                 ),
             )
             self._connection.commit()
@@ -364,6 +374,8 @@ class Storage:
             read_only=bool(row["read_only"]),
             visible=bool(row["visible"]),
             sync_token=row["sync_token"],
+            default_alarm_minutes=(row["default_alarm_minutes"]
+                                   if "default_alarm_minutes" in row.keys() else -1),
         )
 
     # ------------------------------------------------------------------

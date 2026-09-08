@@ -431,6 +431,12 @@ class CalendarWindow(Adw.ApplicationWindow):
         not exist until the view has been rebuilt, hence the idle callback.
         """
         self.stop_search()
+        # The week is the useful landing place for a search result: it shows
+        # the event at its real time, with the rest of that day around it.
+        # Leaving search on its own restores whichever view you searched
+        # from, which is usually the month — where an event is a chip in a
+        # crowded cell.
+        self.show_view("week")
         self.go_to_day(occurrence.first_day)
         GLib.idle_add(self._open_from_search, occurrence)
 
@@ -532,6 +538,7 @@ class CalendarWindow(Adw.ApplicationWindow):
             calendar_name=calendar.name,
             calendar_colour=calendar.colour,
             editable=calendar.writable,
+            calendar_alarm=calendar.default_alarm,
         )
         popover.connect("edit-requested", self._on_edit_requested)
         popover.connect("delete-requested", self._on_delete_requested)

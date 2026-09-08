@@ -145,6 +145,15 @@ class CalendarManager(Adw.Dialog):
         visible.connect("state-set", self._on_visible_changed, calendar)
         row.add_suffix(visible)
 
+        reminder = Gtk.Button(icon_name="alarm-symbolic")
+        reminder.add_css_class("flat")
+        reminder.set_valign(Gtk.Align.CENTER)
+        describe(reminder, "Remind me about everything in this calendar")
+        reminder.connect("clicked", lambda *_: self._set_default_reminder(calendar))
+        if calendar.default_alarm is not None:
+            reminder.add_css_class("suggested-action")
+        row.add_suffix(reminder)
+
         rename = Gtk.Button(icon_name="document-edit-symbolic")
         rename.add_css_class("flat")
         rename.set_valign(Gtk.Align.CENTER)
@@ -165,6 +174,62 @@ class CalendarManager(Adw.Dialog):
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
+
+    #: What a calendar-wide reminder may be set to.  Deliberately short:
+    #: this is a blunt instrument for a whole calendar, not the per-event
+    #: list, which takes any offset at all.
+    REMINDER_CHOICES = (
+        (-1, "No reminder"),
+        (0, "At the time of the event"),
+        (5, "5 minutes before"),
+        (10, "10 minutes before"),
+        (15, "15 minutes before"),
+        (30, "30 minutes before"),
+        (60, "1 hour before"),
+        (120, "2 hours before"),
+        (1440, "1 day before"),
+    )
+
+    def _set_default_reminder(self, calendar: Calendar) -> None:
+        """Choose a reminder for every event in this calendar without one.
+
+        Some servers keep reminders in their own web interface and never put
+        a VALARM into the event, so a calendar of things you expect to be
+        reminded about arrives carrying nothing to remind you. This fills
+        that gap without inventing data: the choice is stored locally and
+        never written back to the server.
+        """
+        dialog = Adw.AlertDialog(
+            heading=f"Remind me about “{calendar.name}”",
+            body=("Applies to events in this calendar that carry no reminder "
+                  "of their own. It is kept on this machine and never written "
+                  "back to the server."))
+
+        chooser = Gtk.DropDown.new_from_strings(
+            [label for _minutes, label in self.REMINDER_CHOICES])
+        chooser.set_selected(next(
+            (index for index, (minutes, _l) in enumerate(self.REMINDER_CHOICES)
+             if minutes == calendar.default_alarm_minutes), 0))
+        chooser.set_margin_top(12)
+        dialog.set_extra_child(chooser)
+
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("set", "Set")
+        dialog.set_response_appearance("set", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("set")
+        dialog.set_close_response("cancel")
+
+        def on_response(_dialog, response: str) -> None:
+            if response != "set":
+                return
+            calendar.default_alarm_minutes = \
+                self.REMINDER_CHOICES[chooser.get_selected()][0]
+            self.sync.storage.save_calendar(calendar)
+            self.sync.emit("calendars-changed")
+            self.rebuild()
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
 
     def _on_colour_changed(self, button: Gtk.ColorDialogButton, _param, calendar: Calendar) -> None:
         rgba: Gdk.RGBA = button.get_rgba()

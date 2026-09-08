@@ -8,6 +8,21 @@ kairos --debug
 
 ---
 
+## My events have no reminders on them
+
+Check first whether the reminders exist in the data at all. Kairos reads
+VALARM components and always has; what it cannot do is show a reminder the
+server never sent. Some servers keep reminders in their own web interface
+and put nothing into the event.
+
+`kairos --debug` will show what arrived. If the events genuinely carry no
+reminder, set one for the whole calendar: **Calendars**
+(<kbd>Ctrl</kbd>+<kbd>L</kbd>), the alarm button on the row. It applies to
+every event in that calendar without a reminder of its own. See
+[the user guide](user-guide.md#when-your-server-sends-no-reminders).
+
+---
+
 ## My calendars appear but they have no events in them
 
 Kairos found the calendars, so the address and password are right; something

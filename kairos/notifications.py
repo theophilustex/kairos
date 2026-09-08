@@ -232,16 +232,29 @@ class AlarmScheduler:
 
         # An event can have a reminder a week ahead of it, so the *events* we
         # need to consider start well after the alarms we are planning.
-        longest_offset = timedelta(minutes=self._longest_alarm_offset())
+        longest_offset = timedelta(minutes=max(
+            self._longest_alarm_offset(),
+            max((c.default_alarm_minutes for c in self.sync.calendars()),
+                default=0)))
         window_start = now - STALE_AFTER
         window_end = now + lookahead + longest_offset
 
         events = self.sync.all_events_between(window_start, window_end)
         occurrences = expand(events, window_start, window_end)
 
+        defaults = {c.id: c.default_alarm for c in self.sync.calendars()}
+
         planned: list[tuple[datetime, Occurrence, int]] = []
         for occurrence in occurrences:
-            for alarm in occurrence.event.alarms:
+            # An event with no reminder of its own falls back to the one set
+            # on its calendar, if any. Some servers keep reminders in their
+            # own interface and never send a VALARM, so without this a whole
+            # calendar arrives with nothing to remind you about.
+            alarms = occurrence.event.alarms
+            if not alarms:
+                fallback = defaults.get(occurrence.calendar_id)
+                alarms = [fallback] if fallback is not None else []
+            for alarm in alarms:
                 fire_at = occurrence.start - timedelta(minutes=alarm.minutes_before)
                 if fire_at < window_start or fire_at > now + lookahead:
                     continue

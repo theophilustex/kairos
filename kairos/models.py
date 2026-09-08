@@ -192,6 +192,23 @@ class Calendar:
     read_only: bool = False
     visible: bool = True
     sync_token: str = ""          # server's ctag/sync-token, for cheap polling
+    #: Remind me this many minutes before every event in this calendar that
+    #: carries no reminder of its own.  -1 means "no default".
+    #:
+    #: Some servers keep reminders in their own web interface and never put a
+    #: VALARM in the event, so a calendar full of things you expect to be
+    #: reminded about arrives with nothing attached to remind you.  This is
+    #: the answer to that, and it is deliberately *not* written back to the
+    #: server: it is a preference about how you want to be told, not a
+    #: correction to somebody else's data.
+    default_alarm_minutes: int = -1
+
+    @property
+    def default_alarm(self) -> Alarm | None:
+        """This calendar's fallback reminder, if it has one."""
+        if self.default_alarm_minutes < 0:
+            return None
+        return Alarm(minutes_before=self.default_alarm_minutes)
 
     @property
     def is_local(self) -> bool:
