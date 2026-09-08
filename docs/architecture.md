@@ -254,6 +254,15 @@ the handler runs, libdbusmenu discards the error, and the menu draws perfectly
 while doing nothing. `tests/test_background.py` therefore asserts on the
 *declaration*, not just the handler.
 
+**The shipped bundle is not the tested bundle.** `requirements.txt` gives
+lower bounds so distribution packages work, and the AppImage build resolves
+them to the newest release — which has meant caldav 3.3 inside the AppImage
+against caldav 0.11 on a Debian system, three major versions apart running
+the same code. `make test` exercises whatever is installed on the machine
+running it, so a green suite does not by itself say the shipped bundle
+behaves the same. When changing `caldav_backend.py`, run the suite against
+the bundle too; `requirements.txt` says how.
+
 **A calendar-query may return less of an event than the event contains.**
 RFC 4791 lets a server put an abridged `calendar-data` in a `calendar-query`
 response, and Synology's leaves out the `VALARM` components. Nothing about

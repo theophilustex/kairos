@@ -28,6 +28,7 @@ from gi.repository import Gdk, GObject, Gtk  # noqa: E402
 from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, start_of_day
+from kairos.ui.week_view import _is_empty_space
 from kairos.ui.widgets import (assign_banner_rows, clear_children, describe,
                                mark_event_widget, on_click,
                                style_widget, tinted_button_css)
@@ -263,12 +264,17 @@ class DayCell(Gtk.Box):
 
     # -- input ------------------------------------------------------------
 
-    def _on_click(self, n_press: int, _x: float, _y: float) -> None:
+    def _on_click(self, n_press: int, x: float, y: float) -> None:
         """First click selects the day; clicking the selected day creates.
 
         The same two-step as the week grid, so the gesture means the same
         thing wherever you are: one click to say where, a second to commit.
         """
+        if not _is_empty_space(self, x, y):
+            # A click on one of the day's event chips. Opening it is that
+            # chip's job; the cell must not also arm itself for creating.
+            return
+
         # Armed by a previous click *on this cell*, not merely "this day is
         # the selected one" — arriving on a day by any other route and
         # clicking it once would otherwise create an event immediately.

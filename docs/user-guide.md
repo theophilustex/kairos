@@ -134,8 +134,8 @@ to that day.
 **To create one**: press **+**, or <kbd>Ctrl</kbd>+<kbd>N</kbd>, or click an
 empty part of the grid.
 
-Clicking empty space **picks** that slot rather than creating there straight
-away: an outline appears showing exactly where and how long a new event would
+Clicking an **event** opens it, as always. Clicking **empty space** picks
+that slot rather than creating there straight away: an outline appears showing exactly where and how long a new event would
 be, and clicking it again creates it. One click is not enough on its own —
 the pointer lands somewhere approximate, and an event appearing silently at a
 time nobody chose is worse than one more click. A **double-click** skips the

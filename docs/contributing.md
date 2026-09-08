@@ -32,7 +32,7 @@ python3 -m unittest tests.test_ical -v      # one module
 python3 -m unittest tests.test_ical.AllDayEvents.test_written_as_dates_not_datetimes
 ```
 
-693 tests, all standard-library `unittest`. There is no framework to install
+700 tests, all standard-library `unittest`. There is no framework to install
 and no configuration file.
 
 | Module | |
@@ -58,7 +58,7 @@ and no configuration file.
 | `test_diagnostics.py` | `--diagnose`, and that it puts settings back. |
 | `test_tls.py` | Trusting a server whose certificate is not publicly signed. |
 | `test_sync_token.py` | Change-tokens, refetching, and not stranding a calendar empty. |
-| `test_slot_and_reminders.py` | Two-click slot picking, and calendar-wide reminders. |
+| `test_slot_and_reminders.py` | Two-click slot picking, click-through, calendar-wide reminders. |
 | `test_drag.py` | Dragging blocks to move and resize events. |
 | `test_keyboard.py` | Arrow-key navigation of the month grid. |
 | `test_gestures.py` | Swiping. |

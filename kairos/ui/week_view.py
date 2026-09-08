@@ -168,6 +168,23 @@ def assign_columns(occurrences: list[Occurrence]) -> list[tuple[Occurrence, int,
     return results
 
 
+def _is_empty_space(container: Gtk.Widget, x: float, y: float) -> bool:
+    """Whether a click at this point hit the background rather than an event.
+
+    A view puts its click handler on the whole day column, so a press on an
+    event reaches the column's gesture as well as the event's own. Asking
+    GTK what is actually under the pointer is the reliable way to tell them
+    apart — the alternative, stopping propagation from every chip, has to be
+    remembered in each of the several places a chip is built.
+    """
+    picked = container.pick(x, y, Gtk.PickFlags.DEFAULT)
+    while picked is not None and picked is not container:
+        if isinstance(picked, Gtk.Button):
+            return False
+        picked = picked.get_parent()
+    return True
+
+
 def row_for(moment: datetime, day: date) -> int:
     """Which grid row a moment falls in, clamped to the day."""
     if moment.date() < day:
@@ -353,7 +370,7 @@ class WeekView(Gtk.Box):
             self._columns_box.append(grid)
             self._day_grids.append(grid)
 
-    def _on_column_click(self, grid: Gtk.Grid, n_press: int, _x: float, y: float) -> None:
+    def _on_column_click(self, grid: Gtk.Grid, n_press: int, x: float, y: float) -> None:
         """Clicking empty space picks a time; clicking it again creates there.
 
         One click is not enough on its own — the pointer lands somewhere
@@ -362,6 +379,13 @@ class WeekView(Gtk.Box):
         slot a new event would fill, and the second confirms it. A
         double-click skips the wait, which is what people used to it expect.
         """
+        if not _is_empty_space(grid, x, y):
+            # The click landed on an event. Its own handler opens it; the
+            # grid must not also treat it as "somewhere to put a new event",
+            # which is what made a slot outline appear behind every event
+            # anyone clicked.
+            return
+
         day: date = grid.day  # type: ignore[attr-defined]
         row = int(y // max(1, self._row_height()))
         minutes = min(ROWS_PER_DAY - 1, max(0, row)) * MINUTES_PER_ROW

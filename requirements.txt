@@ -15,7 +15,29 @@
 #
 #   sudo apt install gnome-keyring        (or kwalletmanager on KDE)
 
+# Lower bounds, not pins: a distribution package should be usable. But see
+# the warning below — the AppImage resolves these to whatever is newest, and
+# "newest" has meant a different *major* version of caldav than the one a
+# Debian box has installed.
 caldav>=1.0
 icalendar>=5.0
 recurring-ical-events>=2.0
 keyring>=23.0
+
+# ---------------------------------------------------------------------------
+# A caution for anyone changing the CalDAV code.
+#
+# These bounds are wide, and the AppImage build installs the newest release
+# that satisfies them. At the time of writing that is caldav 3.3 in the
+# AppImage against caldav 0.11 on a Debian/Ubuntu system — three major
+# versions apart, running the same code. The test suite exercises whichever
+# is installed on the machine running it, so passing tests do not by
+# themselves say the shipped bundle behaves the same way.
+#
+# If you touch kairos/backends/caldav_backend.py, run the suite against the
+# versions the AppImage actually bundles as well:
+#
+#     ./packaging/build-appimage.sh
+#     ./build/Kairos-*.AppImage --appimage-extract
+#     PYTHONPATH=squashfs-root/usr/lib/kairos/vendor make test
+# ---------------------------------------------------------------------------

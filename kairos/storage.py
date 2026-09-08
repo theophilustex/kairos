@@ -52,7 +52,14 @@ SEARCH_INDEX_VERSION = 1
 #:    and Synology's leaves out the VALARMs. Bodies now come from a
 #:    calendar-multiget, so everything fetched before this is missing its
 #:    reminders.
-FETCH_VERSION = 2
+#: 3: the same again. Version 2 was stamped on at least one cache by a
+#:    development run *before* the corrected build reached it, and an
+#:    instance of the old app then kept syncing over the good data. The
+#:    stamp is one-shot by design, so those caches were left wrong with no
+#:    way back. Re-running it costs one download and is the only way to be
+#:    sure; if this happens again the answer is another bump, not a
+#:    cleverer check.
+FETCH_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS calendars (

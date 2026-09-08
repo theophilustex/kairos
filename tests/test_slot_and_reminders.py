@@ -15,13 +15,13 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
 
 Adw.init()
 
 from kairos.accounts import AccountStore  # noqa: E402
 from kairos.config import settings  # noqa: E402
-from kairos.models import Alarm, Calendar, Event, local_timezone  # noqa: E402
+from kairos.models import Alarm, Calendar, Event, local_timezone, start_of_day  # noqa: E402
 from kairos.notifications import AlarmScheduler  # noqa: E402
 from kairos.storage import Storage  # noqa: E402
 from kairos.sync import SyncManager  # noqa: E402
@@ -253,3 +253,114 @@ class ACalendarWideReminder(WithACalendar):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClickingAnEventIsNotClickingEmptySpace(WithACalendar):
+    """The regression: an outline appeared behind every event you clicked.
+
+    The click handler is on the whole day column, so a press on an event
+    reaches it as well as the event's own handler. The column has to ask GTK
+    what is actually under the pointer.
+    """
+
+    def week(self):
+        view = WeekView(self.sync)
+        view.set_date(self.day)
+        return view
+
+    def add(self, hour=10):
+        start = start_of_day(self.day).replace(hour=hour)
+        event = Event.new(self.calendar.id, start, start + timedelta(hours=1),
+                          "Standup")
+        self.sync.save_event(event)
+        return event
+
+    def test_empty_space_is_empty_space(self):
+        from kairos.ui.week_view import _is_empty_space
+        view = self.week()
+        grid = view._day_grids[0]
+        self.assertTrue(_is_empty_space(grid, 5, 5))
+
+    def test_a_button_under_the_pointer_is_not_empty_space(self):
+        from kairos.ui.week_view import _is_empty_space
+        box = Gtk.Box()
+        button = Gtk.Button()
+        box.append(button)
+        box.pick = lambda x, y, flags: button
+        self.assertFalse(_is_empty_space(box, 1, 1))
+
+    def test_a_label_inside_a_button_still_counts_as_the_button(self):
+        """The pick lands on the chip's label, not the chip."""
+        from kairos.ui.week_view import _is_empty_space
+        box = Gtk.Box()
+        button = Gtk.Button()
+        label = Gtk.Label(label="Standup")
+        button.set_child(label)
+        box.append(button)
+        box.pick = lambda x, y, flags: label
+        self.assertFalse(_is_empty_space(box, 1, 1))
+
+    def grid_and_block(self, view):
+        """The column holding the demo event, and the block drawn in it."""
+        grid = view._day_grids[(self.day - view._first_day).days]
+        child = grid.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Button):
+                return grid, child
+            child = child.get_next_sibling()
+        self.fail("no event block was drawn")
+
+    def test_clicking_an_event_arms_nothing(self):
+        """One click on an event must not leave a "new event here" outline."""
+        self.add()
+        view = self.week()
+        grid, block = self.grid_and_block(view)
+        # Stand in for GTK's hit-testing: the press landed on the block.
+        grid.pick = lambda x, y, flags: block
+        created = []
+        view.connect("create-requested", lambda _v, when: created.append(when))
+        view._on_column_click(grid, 1, 10, 10 * 4 * view._row_height())
+        self.assertIsNone(view._slot, "clicking an event armed a slot")
+        self.assertIsNone(view._slot_widget)
+        self.assertEqual(created, [])
+
+    def test_clicking_an_event_twice_creates_nothing(self):
+        self.add()
+        view = self.week()
+        grid, block = self.grid_and_block(view)
+        grid.pick = lambda x, y, flags: block
+        created = []
+        view.connect("create-requested", lambda _v, when: created.append(when))
+        y = 10 * 4 * view._row_height()
+        view._on_column_click(grid, 1, 10, y)
+        view._on_column_click(grid, 1, 10, y)
+        self.assertEqual(created, [], "two clicks on an event created one")
+
+    def test_empty_space_still_arms(self):
+        """The guard must not break the feature it protects."""
+        view = self.week()
+        grid = view._day_grids[(self.day - view._first_day).days]
+        grid.pick = lambda x, y, flags: grid
+        view._on_column_click(grid, 1, 10, 10 * 4 * view._row_height())
+        self.assertIsNotNone(view._slot)
+
+    def test_a_month_cell_ignores_a_click_on_a_chip(self):
+        self.add()
+        view = MonthView(self.sync)
+        view.set_date(self.day)
+        cell = view._cells[self.day]
+        def walk(w):
+            yield w
+            c = w.get_first_child()
+            while c is not None:
+                yield from walk(c); c = c.get_next_sibling()
+        chip = next((w for w in walk(cell) if isinstance(w, Gtk.Button)), None)
+        self.assertIsNotNone(chip, "no chip was drawn in the day cell")
+
+        cell.pick = lambda x, y, flags: chip
+        created = []
+        view.connect("create-requested", lambda _v, when: created.append(when))
+        cell._on_click(1, 5, 5)
+        cell._on_click(1, 5, 5)
+        self.assertEqual(created, [], "clicking a chip twice created an event")
+        self.assertIsNone(view.armed_day)
