@@ -40,6 +40,7 @@ from kairos.ui.search_view import SearchView
 from kairos.ui.sidebar import Sidebar
 from kairos.ui.week_view import DayView, WeekView
 from kairos.ui.widgets import (
+    refresh_past_state,
     add_horizontal_swipe, describe, find_event_widget,
 )
 
@@ -272,6 +273,7 @@ class CalendarWindow(Adw.ApplicationWindow):
 
     def _connect_signals(self) -> None:
         self.sync.connect("events-changed", lambda *_: self.refresh())
+        self._start_clock()
         self.sync.connect("calendars-changed",
                           lambda *_: self._sidebar.rebuild_calendar_list())
         self.sync.connect("sync-started", lambda *_: self._set_syncing(True))
@@ -299,12 +301,46 @@ class CalendarWindow(Adw.ApplicationWindow):
             action.connect("activate", lambda _a, _p, k=key: self.show_view(k))
             self.add_action(action)
 
+    # -- the clock ------------------------------------------------------
+    #
+    # Without one, nothing on screen knew that time was passing: an event
+    # that ended while the window sat open stayed at full strength, and the
+    # week view's "now" line stayed where it was drawn until something else
+    # happened to redraw the view.
+
+    def _start_clock(self) -> None:
+        """Tick once a minute, on the minute."""
+        self._clock_id = 0
+        now = datetime.now()
+        wait = max(1, 60 - now.second)
+        self._clock_id = GLib.timeout_add_seconds(wait, self._first_tick)
+        self.connect("destroy", lambda *_: self._stop_clock())
+
+    def _first_tick(self) -> bool:
+        self._tick()
+        self._clock_id = GLib.timeout_add_seconds(60, self._tick)
+        return GLib.SOURCE_REMOVE
+
+    def _stop_clock(self) -> None:
+        if self._clock_id:
+            GLib.source_remove(self._clock_id)
+            self._clock_id = 0
+
+    def _tick(self) -> bool:
+        """Fade what has just ended and move the "now" line."""
+        for root in (self.current_view, self._sidebar, self._search_view):
+            refresh_past_state(root)
+        draw_now = getattr(self.current_view, "_draw_now_line", None)
+        if draw_now is not None:
+            draw_now()
+        return GLib.SOURCE_CONTINUE
+
     def _on_settings_changed(self, key: str | None) -> None:
         """Redraw when a preference that affects layout changes."""
         layout_keys = {
             "first_day_of_week", "show_week_numbers", "time_format", "hour_height",
             "max_chips_per_day", "agenda_days", "highlight_weekends", "compact_mode",
-            "sidebar_upcoming_count", "sidebar_upcoming_days",
+            "sidebar_upcoming_count", "sidebar_upcoming_days", "fade_past_events",
         }
         if key in (None, "sidebar_show_upcoming"):
             self._sidebar.refresh()

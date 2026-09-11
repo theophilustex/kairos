@@ -519,6 +519,54 @@ def mark_event_widget(widget: Gtk.Widget, occurrence) -> None:
     same occurrence after the view has been rebuilt.
     """
     widget.kairos_occurrence = (occurrence.uid, occurrence.start)
+    # Kept so the widget can be faded later, when the event ends while the
+    # window is open, without rebuilding the view around it.
+    widget.kairos_ends = occurrence.end
+    apply_past_state(widget)
+
+
+#: The class an event widget carries once its event has ended.  Part of the
+#: styling API: ``custom.css`` can restyle it, or undo it.
+PAST_CLASS = "kairos-past"
+
+
+def apply_past_state(widget: Gtk.Widget, now: datetime | None = None) -> None:
+    """Fade an event widget if its event is over, and un-fade it if not.
+
+    "Over" means *ended*, not started: a meeting in progress is exactly the
+    one you are looking for, so it stays at full strength.  An all-day
+    event's end is the following midnight, so it lasts the whole day.
+    """
+    ends = getattr(widget, "kairos_ends", None)
+    if ends is None:
+        return
+    now = now or datetime.now(tz=local_timezone())
+    if settings.get_bool("fade_past_events") and ends <= now:
+        widget.add_css_class(PAST_CLASS)
+    else:
+        widget.remove_css_class(PAST_CLASS)
+
+
+def refresh_past_state(root: Gtk.Widget, now: datetime | None = None) -> int:
+    """Re-check every event widget under ``root``; returns how many are faded.
+
+    Cheap enough to run every minute: it walks widgets that already exist
+    and toggles one class, rather than rebuilding a view — which would also
+    close any open popover and forget a picked slot.
+    """
+    now = now or datetime.now(tz=local_timezone())
+    faded = 0
+    stack = [root]
+    while stack:
+        widget = stack.pop()
+        if hasattr(widget, "kairos_ends"):
+            apply_past_state(widget, now)
+            faded += widget.has_css_class(PAST_CLASS)
+        child = widget.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    return faded
 
 
 def find_event_widget(root: Gtk.Widget, occurrence) -> Gtk.Widget | None:

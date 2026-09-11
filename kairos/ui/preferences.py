@@ -201,6 +201,10 @@ class PreferencesDialog(Adw.PreferencesDialog):
             "Tighter padding, so more fits on screen.",
         ))
         theme.add(self._switch("Rounded event chips", "rounded_event_chips"))
+        theme.add(self._switch(
+            "Fade events that have ended", "fade_past_events",
+            "So what is still to come stands out from what is already over.",
+        ))
         page.add(theme)
 
         custom = Adw.PreferencesGroup(

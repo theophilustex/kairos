@@ -92,6 +92,21 @@
     filter: brightness(1.12);
 }
 
+/* An event that has ended.  Faded and greyed rather than hidden: the past
+   is still worth seeing, it just should not compete with what is to come.
+   Opacity and filter are separate properties, so the fade survives the
+   hover brightening above; the :hover rule restates both so hovering a past
+   event still shows it is clickable without making it look current. */
+.kairos-past {
+    opacity: 0.45;
+    filter: saturate(0.35);
+}
+
+.kairos-past:hover {
+    opacity: 0.7;
+    filter: saturate(0.35) brightness(1.12);
+}
+
 .kairos-event-chip.declined {
     opacity: 0.55;
     text-decoration: line-through;

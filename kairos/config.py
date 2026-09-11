@@ -69,6 +69,7 @@ DEFAULTS: dict[str, Any] = {
     "font_scale": 1.0,              # 0.75 - 1.5, multiplies the UI font size
     "compact_mode": False,          # tighter padding everywhere
     "rounded_event_chips": True,    # square chips look denser
+    "fade_past_events": True,       # dim events that have already ended
     # -- Calendar layout --------------------------------------------------
     "default_view": "month",        # "month" | "week" | "day" | "agenda"
     "first_day_of_week": "monday",  # "monday" | "sunday" | "saturday"

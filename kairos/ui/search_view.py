@@ -22,7 +22,8 @@ from gi.repository import GObject, Gtk  # noqa: E402
 
 from kairos import formatting, recurrence
 from kairos.models import Event, Occurrence, local_timezone
-from kairos.ui.widgets import clear_children, colour_swatch, empty_state
+from kairos.ui.widgets import (clear_children, colour_swatch, empty_state,
+                               mark_event_widget)
 
 #: More than this and the list stops being useful; refine the search instead.
 MAX_RESULTS = 60
@@ -159,4 +160,5 @@ class SearchView(Gtk.Box):
         button.add_css_class("flat")
         button.set_child(row)
         button.connect("clicked", lambda b: self.emit("event-activated", occurrence, b))
+        mark_event_widget(button, occurrence)
         return button

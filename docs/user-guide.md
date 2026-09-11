@@ -94,7 +94,7 @@ across the days they cover.
 
 **Week** and **Day** — a timed grid. Events sit at their real times, and
 overlapping ones are placed side by side automatically. A line across the grid
-shows the current time. The view opens scrolled to about an hour before now
+shows the current time, and moves with it. The view opens scrolled to about an hour before now
 rather than at midnight.
 
 All-day events sit in a strip above the grid. An event covering several days
@@ -126,6 +126,12 @@ The most useful view in a narrow window.
 
 Click a day heading in the week view, or "+N more" in the month view, to jump
 to that day.
+
+**Events that have ended are faded** in every view, so what is still to come
+stands out from what is already over. An event in progress is not faded — it
+is the one you are most likely looking for — and an all-day event lasts until
+midnight. Events fade as they end while Kairos is open. Turn it off with
+*Fade events that have ended* in **Preferences → Appearance**.
 
 ---
 

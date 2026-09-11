@@ -37,8 +37,8 @@ a crash cannot leave half a file behind.
 
 - **General** — views, week start, clock, new-event defaults, grid density,
   and whether Kairos keeps running in the background.
-- **Appearance** — light/dark, accent colour, text size, compact spacing, and
-  buttons to open `custom.css` and the config folder.
+- **Appearance** — light/dark, accent colour, text size, compact spacing,
+  fading past events, and buttons to open `custom.css` and the config folder.
 - **Reminders** — notifications, the alert window, default snooze, and a test
   button.
 - **Sync & security** — sync interval, how much history to keep, network
@@ -88,6 +88,7 @@ Defaults are what Kairos uses if the key is absent.
 | `font_scale` | `1.0` | 0.75–1.5 | Multiplies the whole window's font size. |
 | `compact_mode` | `false` | true / false | Tighter padding everywhere. |
 | `rounded_event_chips` | `true` | true / false | Square chips read denser. |
+| `fade_past_events` | `true` | true / false | Dim events that have already ended. |
 
 ### Calendar layout
 
@@ -205,6 +206,7 @@ These are stable; treat them as the styling API.
 | `.kairos-hour-row` | An hour rule in the week grid. |
 | `.kairos-day-column` | One day column in the week grid. |
 | `.kairos-now-line` | The current-time line. |
+| `.kairos-past` | Any event that has ended. Restyle it, or undo it: `.kairos-past { opacity: 1; filter: none; }` |
 | `.kairos-slot-selection` | The slot a click picked, awaiting a second click. |
 | `.kairos-drop-indicator` | Where a dragged event would land. |
 | `.kairos-dragging` | The event being dragged. |
