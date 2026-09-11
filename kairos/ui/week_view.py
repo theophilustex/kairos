@@ -21,14 +21,14 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Graphene", "1.0")
-from gi.repository import GLib, GObject, Graphene, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib, GObject, Graphene, Gtk  # noqa: E402
 
 from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, local_timezone, start_of_day
-from kairos.ui.widgets import (assign_banner_rows, clear_children,
-                               mark_event_widget, on_click, style_widget,
-                               tinted_button_css)
+from kairos.ui.widgets import (assign_banner_rows, clear_children, describe,
+                               find_event_widget, mark_event_widget, on_click,
+                               style_widget, tinted_button_css)
 
 #: Rows per hour.  Four gives fifteen-minute resolution, which is as fine as
 #: anyone schedules and keeps the widget count sensible (96 rows per day).
@@ -187,6 +187,23 @@ def _is_empty_space(container: Gtk.Widget, x: float, y: float) -> bool:
     return True
 
 
+def scroll_to_reveal(value: float, page: float, upper: float,
+                     top: float, bottom: float, margin: float) -> float:
+    """Where to scroll so that ``top``..``bottom`` is on screen, moving least.
+
+    ``margin`` keeps a little context either side, so the cursor is never
+    pinned against the edge. Pure arithmetic, so it can be tested without a
+    window that has been laid out.
+    """
+    if page <= 0:
+        return value
+    if top - margin < value:
+        return max(0.0, top - margin)
+    if bottom + margin > value + page:
+        return max(0.0, min(bottom + margin - page, upper - page))
+    return value
+
+
 def row_for(moment: datetime, day: date) -> int:
     """Which grid row a moment falls in, clamped to the day."""
     if moment.date() < day:
@@ -220,6 +237,10 @@ class WeekView(Gtk.Box):
         #: The slot a first click picked, waiting for a second to confirm it.
         self._slot: tuple[date, int] | None = None
         self._slot_widget: Gtk.Widget | None = None
+        #: Timed occurrences per day, kept from the last redraw so the
+        #: keyboard can tell whether the cursor is on an event.
+        self._timed_by_day: dict[date, list[Occurrence]] = {}
+        self._last_announcement = ""
         self._calendar_cache = None
         self._now_line: Gtk.Widget | None = None
         self._scrolled_once = False
@@ -332,6 +353,23 @@ class WeekView(Gtk.Box):
 
         self._scroller.set_child(self._body)
 
+        # -- the keyboard ---------------------------------------------------
+        # The view itself takes focus; a cursor moves over the grid rather
+        # than each quarter hour being a widget of its own, which would be
+        # 672 focusable widgets for a week. The cursor *is* the slot a click
+        # picks, so the two ways of choosing a time are one mechanism.
+        self.set_focusable(True)
+        describe(self, "Week grid", tooltip=False)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key_pressed)
+        # CAPTURE, so the arrows move the cursor before the scrolled window
+        # takes them to mean "scroll".
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self.add_controller(keys)
+        focus = Gtk.EventControllerFocus()
+        focus.connect("enter", self._on_focus_enter)
+        self.add_controller(focus)
+
     def _build_gutter(self) -> None:
         clear_children(self._gutter)
         row_height = self._row_height()
@@ -404,6 +442,10 @@ class WeekView(Gtk.Box):
 
         self._slot = (day, minutes)
         self._show_slot()
+        # So the arrows carry on from where you clicked. After the slot is
+        # set, never before: focusing an empty grid places a default cursor,
+        # and that must not be mistaken for a first click on this slot.
+        self.grab_focus()
 
     # -- the pending "new event here" slot -----------------------------
 
@@ -474,9 +516,11 @@ class WeekView(Gtk.Box):
         colours = {c.id: c.colour for c in self.sync.calendars()}
 
         self._fill_all_day(by_day, colours)
+        self._timed_by_day = {}
         for offset, grid in enumerate(self._day_grids):
             day = self._first_day + timedelta(days=offset)
             timed = [o for o in by_day.get(day, []) if not self._is_banner(o)]
+            self._timed_by_day[day] = timed
             self._fill_day(grid, day, timed, colours)
 
         # The grids were rebuilt, so the old highlight widget is gone; put a
@@ -885,6 +929,184 @@ class WeekView(Gtk.Box):
         adjustment.set_value(min(hour * settings.get_int("hour_height"),
                                  max(0, adjustment.get_upper() - adjustment.get_page_size())))
         return GLib.SOURCE_REMOVE
+
+    # ------------------------------------------------------------------
+    # The keyboard
+    # ------------------------------------------------------------------
+
+    #: What each arrow moves the cursor by, as (days, minutes). A quarter
+    #: hour is a grid row, and the same step a click or a drag lands on.
+    KEY_MOVES = {
+        Gdk.KEY_Left: (-1, 0), Gdk.KEY_KP_Left: (-1, 0),
+        Gdk.KEY_Right: (1, 0), Gdk.KEY_KP_Right: (1, 0),
+        Gdk.KEY_Up: (0, -SLOT_SNAP_MINUTES), Gdk.KEY_KP_Up: (0, -SLOT_SNAP_MINUTES),
+        Gdk.KEY_Down: (0, SLOT_SNAP_MINUTES), Gdk.KEY_KP_Down: (0, SLOT_SNAP_MINUTES),
+    }
+
+    def _on_key_pressed(self, _controller, keyval, _keycode, state) -> bool:
+        """Arrows move the cursor, Enter opens or creates, Escape lets go.
+
+        Returns ``True`` to stop the key going further, which is what keeps
+        the arrows from scrolling instead of moving.
+        """
+        if state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK):
+            return False        # Ctrl and Alt with an arrow belong to the window
+
+        move = self.KEY_MOVES.get(keyval)
+        if move is not None:
+            days, minutes = move
+            if minutes and state & Gdk.ModifierType.SHIFT_MASK:
+                minutes *= 60 // SLOT_SNAP_MINUTES          # an hour at a time
+            self.move_cursor(days=days, minutes=minutes)
+            return True
+
+        if keyval in (Gdk.KEY_Page_Up, Gdk.KEY_KP_Page_Up):
+            self.move_cursor(days=-self.day_count)
+            return True
+        if keyval in (Gdk.KEY_Page_Down, Gdk.KEY_KP_Page_Down):
+            self.move_cursor(days=self.day_count)
+            return True
+        if keyval in (Gdk.KEY_Home, Gdk.KEY_KP_Home):
+            self.place_cursor(self._first_day, self._cursor()[1])
+            return True
+        if keyval in (Gdk.KEY_End, Gdk.KEY_KP_End):
+            self.place_cursor(self._first_day + timedelta(days=self.day_count - 1),
+                              self._cursor()[1])
+            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_space):
+            if self._focus_is_inside_an_event():
+                return False    # the focused button's own activation wins
+            self.activate_cursor()
+            return True
+        if keyval == Gdk.KEY_Escape and self._slot is not None:
+            self.clear_slot()
+            return True
+        return False
+
+    def _on_focus_enter(self, controller=None, *_args) -> None:
+        """Show the cursor when the grid is reached from the keyboard.
+
+        Which "is it focused?" to ask matters, and two obvious answers are
+        wrong. ``has_focus()`` is only true while the *window* is the active
+        one. ``is_focus()`` reads the window's record of its focused widget,
+        and GTK emits this signal *before* updating that record — so both
+        said no at exactly the moment focus arrived, and the cursor never
+        appeared. The controller's own ``is-focus`` is already correct when
+        it fires. Only the grid itself counts: focus arriving on an event
+        block inside it is Tab reaching that event.
+        """
+        focused = (controller.props.is_focus if controller is not None
+                   else self.is_focus())
+        if focused and self._slot is None:
+            self.place_cursor(*self._default_cursor())
+
+    def _focus_is_inside_an_event(self) -> bool:
+        """Whether keyboard focus is on a button within the grid.
+
+        Tab reaches event blocks and day headings, which are buttons. Enter
+        on one of those should press *it*, not act on the cursor behind it.
+        """
+        root = self.get_root()
+        focus = root.get_focus() if root is not None else None
+        while focus is not None and focus is not self:
+            if isinstance(focus, Gtk.Button):
+                return True
+            focus = focus.get_parent()
+        return False
+
+    def _default_cursor(self) -> tuple[date, int]:
+        """Somewhere sensible to start: now if today is showing, else morning."""
+        last = self._first_day + timedelta(days=self.day_count)
+        day = self._anchor if self._first_day <= self._anchor < last else self._first_day
+        if day == date.today():
+            now = datetime.now()
+            minutes = now.hour * 60 + now.minute
+        else:
+            minutes = settings.get_int("week_view_start_hour") * 60
+        return day, minutes - minutes % SLOT_SNAP_MINUTES
+
+    def _cursor(self) -> tuple[date, int]:
+        """Where the cursor is, putting it somewhere sensible first if need be.
+
+        A slot left behind in a week you have since navigated away from does
+        not count: moving from it would drag the view straight back there.
+        """
+        last = self._first_day + timedelta(days=self.day_count)
+        if self._slot is None or not self._first_day <= self._slot[0] < last:
+            self._slot = self._default_cursor()
+        return self._slot
+
+    def move_cursor(self, *, days: int = 0, minutes: int = 0) -> None:
+        """Move the cursor by whole days and quarter hours.
+
+        Vertically it stops at either end of the day: the day before or after
+        is a sideways move, not a vertical one. Sideways it pages to the next
+        week rather than stopping dead, as the month grid does.
+        """
+        day, at = self._cursor()
+        at = max(0, min(MINUTES_PER_DAY - SLOT_SNAP_MINUTES, at + minutes))
+        self.place_cursor(day + timedelta(days=days), at)
+
+    def place_cursor(self, day: date, minutes: int) -> None:
+        """Put the cursor on a slot, bring it into view, and say where it is."""
+        minutes -= minutes % SLOT_SNAP_MINUTES
+        previous = self._anchor
+        if not self._first_day <= day < self._first_day + timedelta(days=self.day_count):
+            self.set_date(day)                  # pages the grid to that day
+        else:
+            self._anchor = day
+        self._slot = (day, minutes)
+        self._show_slot()
+        self._reveal(minutes)
+        self._announce_cursor()
+        if day != previous:
+            self.emit("date-selected", day)
+
+    def activate_cursor(self) -> None:
+        """Enter: open the event under the cursor, or create one there."""
+        day, minutes = self._cursor()
+        moment = start_of_day(day) + timedelta(minutes=minutes)
+        occurrence = self._event_at(day, moment)
+        if occurrence is not None:
+            self.emit("event-activated", occurrence,
+                      find_event_widget(self, occurrence) or self)
+            return
+        self.clear_slot()
+        self.emit("create-requested", moment)
+
+    def _event_at(self, day: date, moment: datetime) -> Occurrence | None:
+        """The timed event covering ``moment``; the latest to start, if several."""
+        covering = [o for o in self._timed_by_day.get(day, [])
+                    if o.start <= moment < o.end or o.start == moment]
+        return max(covering, key=lambda o: o.start) if covering else None
+
+    def _reveal(self, minutes: int) -> None:
+        """Scroll just far enough to keep the cursor on screen."""
+        adjustment = self._scroller.get_vadjustment()
+        row = self._row_height()
+        top = minutes / MINUTES_PER_ROW * row
+        length = max(SLOT_SNAP_MINUTES, settings.get_int("default_event_duration_minutes"))
+        bottom = top + max(MIN_BLOCK_PIXELS, length / MINUTES_PER_ROW * row)
+        target = scroll_to_reveal(adjustment.get_value(), adjustment.get_page_size(),
+                                  adjustment.get_upper(), top, bottom,
+                                  margin=row * ROWS_PER_HOUR / 2)
+        if target != adjustment.get_value():
+            adjustment.set_value(target)
+
+    def _announce_cursor(self) -> None:
+        """Tell a screen reader where the cursor is, and what is there."""
+        day, minutes = self._cursor()
+        moment = start_of_day(day) + timedelta(minutes=minutes)
+        text = f"{formatting.format_date(day)}, {formatting.format_time(moment)}"
+        occurrence = self._event_at(day, moment)
+        if occurrence is not None:
+            text += f", {occurrence.summary}"
+        self._last_announcement = text
+        describe(self, text, tooltip=False)
+        try:
+            self.announce(text, Gtk.AccessibleAnnouncementPriority.MEDIUM)
+        except (AttributeError, TypeError):
+            pass        # GTK older than 4.14: the accessible label still says it
 
 
 class DayView(WeekView):

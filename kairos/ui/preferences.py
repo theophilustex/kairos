@@ -83,6 +83,9 @@ class PreferencesDialog(Adw.PreferencesDialog):
 
     def _general_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage(title="General", icon_name="preferences-system-symbolic")
+        # First on the page: it decides whether reminders arrive at all, and
+        # at the bottom of a long page it was easy to miss entirely.
+        page.add(self._background_group())
 
         layout = Adw.PreferencesGroup(title="Calendar")
         layout.add(self._choice("Default view", "default_view", [
@@ -127,7 +130,6 @@ class PreferencesDialog(Adw.PreferencesDialog):
         ))
         page.add(grid)
 
-        page.add(self._background_group())
         return page
 
     def _background_group(self) -> Adw.PreferencesGroup:
@@ -137,7 +139,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         remind you of anything.
         """
         group = Adw.PreferencesGroup(
-            title="Running",
+            title="Startup and background",
             description=(
                 "Kairos has to be running to remind you about anything. Left "
                 "in the background it costs a few megabytes and one timer."
@@ -150,10 +152,15 @@ class PreferencesDialog(Adw.PreferencesDialog):
         ))
 
         login = Adw.SwitchRow(
-            title="Start automatically when you log in",
-            subtitle="Starts in the background, without opening the window.",
+            title="Start in the background when you log in",
+            subtitle=("Kairos starts with your desktop, quietly in the "
+                      "taskbar, so reminders arrive without opening the window."),
         )
         login.set_active(autostart.is_enabled())
+        if autostart.is_stale():
+            login.set_subtitle(
+                "On, but it points at a copy of Kairos that is no longer "
+                "there. Switch it off and on again to point it at this one.")
         login.connect("notify::active", self._on_autostart_changed)
         group.add(login)
         self._autostart_row = login

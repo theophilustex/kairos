@@ -268,10 +268,20 @@ applications menu brings the window back.
 **To quit properly**: <kbd>Ctrl</kbd>+<kbd>Q</kbd>, or *Quit Kairos* from the
 tray menu.
 
-**To have it start with your session**: Preferences → General → Running →
-*Start automatically when you log in*. That writes
-`~/.config/autostart/org.kairos.Calendar.desktop`, which starts Kairos in the
-background so you get reminders without a window appearing in your face.
+**To have it start with your computer**: Preferences → General → *Startup
+and background* → *Start in the background when you log in*. It is the first
+thing on that page. Kairos then starts with your desktop session, quietly in
+the taskbar, so reminders arrive without a window appearing in your face.
+Switch it off in the same place.
+
+(Desktop applications start when you *log in* rather than when the machine
+powers on, since that is when there is a desktop for them to run in. With
+automatic login the two are the same moment.)
+
+This writes `~/.config/autostart/org.kairos.Calendar.desktop`, which names
+the exact file Kairos was started from. If you move or rename the AppImage,
+that entry would point at nothing; Kairos repairs it the next time you open
+it from its new place, and Preferences says so if it finds the entry broken.
 
 **To go back to ordinary behaviour**: turn off *Keep running when the window
 is closed* in the same place, and closing the window will quit.
@@ -309,6 +319,26 @@ Click a day, or <kbd>Tab</kbd> to the grid, and then:
 Walking off the edge of the month brings the next one in rather than stopping.
 Each day announces its date and how many events it has, so the grid can be
 used with a screen reader.
+
+### In the week and day grids
+
+Click the grid, or <kbd>Tab</kbd> to it, and a cursor appears — the same
+outline a click on empty space draws. Then:
+
+| | |
+|---|---|
+| <kbd>↑</kbd> <kbd>↓</kbd> | A quarter of an hour earlier / later |
+| <kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> | An hour earlier / later |
+| <kbd>←</kbd> <kbd>→</kbd> | Previous / next day, same time |
+| <kbd>Home</kbd> / <kbd>End</kbd> | First / last day of the week |
+| <kbd>Page Up</kbd> / <kbd>Page Down</kbd> | Same time last / next week (a day, in the day view) |
+| <kbd>Enter</kbd> or <kbd>Space</kbd> | Open the event under the cursor, or create one there |
+| <kbd>Escape</kbd> | Let go of the cursor |
+
+Walking off either side of the week brings the next one in; the grid scrolls
+to keep the cursor in view. It stops at midnight rather than wrapping into
+the next day. Wherever it lands, a screen reader hears the day, the time, and
+the event there if there is one.
 
 They are all in one table at the top of
 [`kairos/app.py`](../kairos/app.py) if you want different ones.

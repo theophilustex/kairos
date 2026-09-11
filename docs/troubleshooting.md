@@ -8,6 +8,20 @@ kairos --debug
 
 ---
 
+## Kairos does not start when I log in
+
+Check **Preferences → General → Startup and background**. If *Start in the
+background when you log in* says it points at a copy of Kairos that is no
+longer there, the AppImage has moved or been renamed since the switch was
+turned on. Open Kairos once from where it lives now and the entry is
+repaired automatically; or switch it off and on again.
+
+Kairos starts hidden, in the taskbar. On a desktop with no system tray —
+GNOME without an extension — it is running but has nowhere to show an icon;
+opening it from your applications menu brings the window back.
+
+---
+
 ## My events have no reminders on them
 
 **If you are on a Synology NAS, update.** Its CalDAV answers a

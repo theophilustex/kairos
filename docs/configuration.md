@@ -130,7 +130,9 @@ Defaults are what Kairos uses if the key is absent.
 
 Starting at login is not a key here: it is the presence of
 `~/.config/autostart/org.kairos.Calendar.desktop`, so there is nothing that
-can disagree with reality.
+can disagree with reality. That file names the exact copy of Kairos that
+wrote it; if that copy has since moved, Kairos rewrites the entry the next
+time it starts, and never touches an entry that still works.
 
 ### Reminders
 

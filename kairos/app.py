@@ -21,6 +21,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib  # noqa: E402
 
+from kairos import autostart
 from kairos import APP_ID, APP_NAME, VERSION
 from kairos.config import ensure_directories, settings
 from kairos.notifications import AlarmScheduler
@@ -121,6 +122,10 @@ class KairosApplication(Adw.Application):
         self.sync.start()
         self.alarms.start()
         self._start_tray()
+        # A login entry names the exact file it was written from. Move or
+        # rename the AppImage and it would silently stop working while the
+        # switch still said "on"; starting from the new place puts it right.
+        autostart.refresh_if_moved()
 
     def do_activate(self) -> None:
         self._ensure_running()

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 import shutil
 import stat
 import sys
@@ -59,6 +60,60 @@ def startup_command() -> str:
 
 def is_enabled() -> bool:
     return desktop_file().is_file()
+
+
+def _exec_value() -> str | None:
+    """The Exec= line of the login entry, if there is one."""
+    try:
+        for line in desktop_file().read_text(encoding="utf-8").splitlines():
+            if line.startswith("Exec="):
+                return line[len("Exec="):]
+    except OSError:
+        return None
+    return None
+
+
+def _program(exec_value: str) -> str | None:
+    """The program an Exec= line runs, looking past a leading ``env VAR=...``."""
+    try:
+        parts = shlex.split(exec_value)
+    except ValueError:
+        return None
+    if parts and parts[0] == "env":
+        parts = [p for p in parts[1:] if "=" not in p.split("/")[0]]
+    return parts[0] if parts else None
+
+
+def is_stale() -> bool:
+    """Whether login startup is on but points at something that is not there.
+
+    The entry records the exact file it was written from, and an AppImage
+    is just a file people move and rename. When that happens the switch in
+    Preferences still says "on" — the file is there — but nothing starts.
+    """
+    if not is_enabled():
+        return False
+    program = _program(_exec_value() or "")
+    if not program:
+        return True
+    if os.path.isabs(program):
+        return not Path(program).exists()
+    return shutil.which(program) is None
+
+
+def refresh_if_moved() -> bool:
+    """Point a broken login entry at the copy of Kairos running now.
+
+    Only ever repairs an entry whose target has gone. A working entry is
+    left alone, so running a second copy — a source checkout, a newer
+    download — does not quietly take over login startup. Returns whether
+    the file was rewritten.
+    """
+    if not is_stale():
+        return False
+    log.info("login startup pointed at something that no longer exists; "
+             "repointing it at %s", startup_command())
+    return set_enabled(True)
 
 
 def set_enabled(enabled: bool) -> bool:
