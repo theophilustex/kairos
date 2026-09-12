@@ -90,6 +90,45 @@ class RepairingIt(WithAConfigDirectory):
         self.assertFalse(autostart.refresh_if_moved())
         self.assertFalse(autostart.is_enabled())
 
+    def test_startup_repairs_it_before_anything_that_could_fail(self):
+        """The tray, the sync, the window: none of them must be able to skip it.
+
+        Letting the rest of start-up blow up is the point — the repair has
+        to have happened already by then.
+        """
+        from kairos import app as app_module
+        self.write('"/nowhere/Kairos-0.1.0-x86_64.AppImage" --background')
+
+        class Stub:
+            window = None                      # nothing else is set up
+
+        with self.assertRaises(Exception):     # CalendarWindow(None, ...) fails
+            app_module.KairosApplication._ensure_running(Stub())
+        self.assertEqual(self.exec_line(), f"Exec={autostart.startup_command()}")
+
+    def test_a_failure_to_check_does_not_stop_kairos_starting(self):
+        from kairos import app as app_module
+
+        class Sentinel(Exception):
+            pass
+
+        def explode():
+            raise Sentinel("the config directory is unreadable")
+
+        original = app_module.autostart.refresh_if_moved
+        app_module.autostart.refresh_if_moved = explode
+
+        class Stub:
+            window = None
+
+        try:
+            with self.assertRaises(Exception) as caught:
+                app_module.KairosApplication._ensure_running(Stub())
+            self.assertNotIsInstance(caught.exception, Sentinel,
+                                     "a broken login entry stopped start-up")
+        finally:
+            app_module.autostart.refresh_if_moved = original
+
     def test_an_appimage_points_at_itself(self):
         appimage = self.directory / "Kairos-x86_64.AppImage"
         appimage.write_text("")

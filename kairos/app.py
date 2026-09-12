@@ -117,15 +117,23 @@ class KairosApplication(Adw.Application):
         """
         if self.window is not None:
             return
+
+        # First, and guarded. A login entry names the exact file it was
+        # written from, so moving or renaming the AppImage would silently
+        # stop it working while the switch still said "on"; starting from
+        # the new place puts it right. It depends on nothing below it, so
+        # anything that goes wrong down there must not skip it — and it
+        # must not be able to stop Kairos starting either.
+        try:
+            autostart.refresh_if_moved()
+        except Exception:
+            log.exception("could not check the login startup entry")
+
         self.window = CalendarWindow(self, self.sync, self.theme)
         self.apply_background_mode()
         self.sync.start()
         self.alarms.start()
         self._start_tray()
-        # A login entry names the exact file it was written from. Move or
-        # rename the AppImage and it would silently stop working while the
-        # switch still said "on"; starting from the new place puts it right.
-        autostart.refresh_if_moved()
 
     def do_activate(self) -> None:
         self._ensure_running()
