@@ -148,6 +148,12 @@ time nobody chose is worse than one more click. A **double-click** skips the
 wait. Clicking a different slot moves the choice; changing week or month
 forgets it.
 
+**Or drag it out.** In the week and day views, press on empty space and drag
+down (or up): an outline shows the event you are drawing, with its start and
+end times on it, in quarter-hour steps. Let go and the editor opens with
+exactly that length. Pressing on an existing event drags *that* event
+instead, as before.
+
 **To open one**: click it. A bubble appears with the details and **Edit** and
 **Delete**. If the event has a link — in its **Link** field, its location, or
 anywhere in its notes — there is a **Join** button too, which opens it in your
@@ -227,6 +233,17 @@ is very easy to miss. The window stays until you answer it:
 
 Reminders that fall due together share one window rather than opening several.
 
+**The notification has buttons of its own**: *Snooze* (for your usual snooze
+length) and *Open*, which shows the event's day. Either one takes the
+reminder off the alert window too, so you are not asked twice.
+
+**If the computer was asleep** when a reminder came due, it is shown as soon
+as the machine wakes — Kairos listens for the wake-up rather than waiting for
+its next check. A reminder for an event that has already *finished* by the
+time you wake is not shown, since there is nothing left to be reminded of;
+one for an event still to come, or under way, is. Anything more than a day
+old is let go.
+
 ### When your server sends no reminders
 
 Some servers — Synology's among them — keep reminders in their own web
@@ -258,7 +275,9 @@ A calendar that is not running cannot remind you of anything, so by default
 closing the window does not quit Kairos. It carries on in the taskbar, syncing
 and firing reminders.
 
-**The taskbar icon** has a menu: *Open Kairos*, *New event*, *Sync now* and
+**The taskbar icon** shows what is on now and what is next when you hover
+over it — "Next: Dentist at 14:00 · in 25 min" — kept up to date as the
+minutes pass. It has a menu: *Open Kairos*, *New event*, *Sync now* and
 *Quit Kairos*. Clicking the icon shows the window, raises it if it is behind
 something, and hides it again if it is already in front. Not every desktop has a
 system tray — GNOME needs an extension — and where there is none the icon

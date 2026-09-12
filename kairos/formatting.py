@@ -161,3 +161,49 @@ def month_grid_start(month_day: date) -> date:
 
 def iso_week_number(day: date) -> int:
     return day.isocalendar().week
+
+
+# --------------------------------------------------------------------------
+# The tray icon's tooltip
+# --------------------------------------------------------------------------
+
+def tray_summary(occurrences, now) -> str:
+    """What the tray icon's tooltip says: what is on now, and what is next.
+
+    Timed events only. An all-day event is "on" from midnight to midnight,
+    and letting it answer "what is happening now" would push the meeting
+    that is actually about to start out of sight.
+    """
+    timed = sorted((o for o in occurrences if not o.all_day and o.end > now),
+                   key=lambda o: (o.start, o.summary.lower()))
+    current = [o for o in timed if o.start <= now]
+    upcoming = [o for o in timed if o.start > now]
+
+    lines = []
+    if current:
+        # The most recently started is the one you are most likely in.
+        occurrence = current[-1]
+        lines.append(f"Now: {occurrence.summary or '(No title)'}, "
+                     f"until {format_time(occurrence.end)}")
+    if upcoming:
+        occurrence = upcoming[0]
+        lines.append(f"Next: {occurrence.summary or '(No title)'} "
+                     f"{_when_next(occurrence.start, now)}")
+    return "\n".join(lines) or "Nothing coming up in the next week"
+
+
+def _when_next(start, now) -> str:
+    """ "at 14:00 · in 25 min", "tomorrow at 09:00", or "on Tuesday at 09:00". """
+    if start.date() == now.date():
+        minutes = max(1, round((start - now).total_seconds() / 60))
+        return f"at {format_time(start)} · in {_duration_phrase(minutes)}"
+    if start.date() == now.date() + timedelta(days=1):
+        return f"tomorrow at {format_time(start)}"
+    return f"on {DAY_NAMES[start.weekday()]} at {format_time(start)}"
+
+
+def _duration_phrase(minutes: int) -> str:
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, rest = divmod(minutes, 60)
+    return f"{hours} h" if rest == 0 else f"{hours} h {rest} min"

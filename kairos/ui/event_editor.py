@@ -53,7 +53,7 @@ class EventEditor(Adw.Dialog):
     MAX_CUSTOM_MINUTES = 366 * 24 * 60
 
     def __init__(self, calendars: list[Calendar], *, event: Event | None = None,
-                 start: datetime | None = None) -> None:
+                 start: datetime | None = None, end: datetime | None = None) -> None:
         super().__init__()
         self.set_title("Edit event" if event else "New event")
         self.set_content_width(480)
@@ -69,9 +69,12 @@ class EventEditor(Adw.Dialog):
         # own clock, so convert on the way in; build_event writes local times
         # back out, which denote the same instant.
         start = start or (to_local(event.start) if event else self._default_start())
-        end = to_local(event.end) if event else start + timedelta(
-            minutes=settings.get_int("default_event_duration_minutes")
-        )
+        if event is not None:
+            end = to_local(event.end)
+        elif end is None or end <= start:
+            # No length given — or a nonsensical one — so a new event gets
+            # the usual length. A drag over the grid supplies its own.
+            end = start + timedelta(minutes=settings.get_int("default_event_duration_minutes"))
 
         self._build(event, start, end)
 

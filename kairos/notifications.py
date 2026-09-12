@@ -29,8 +29,9 @@ itself has been edited or the laptop was asleep.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from gi.repository import Gio, GLib
 
@@ -55,6 +56,39 @@ STALE_AFTER = timedelta(minutes=30)
 #: Never sleep longer than this, so that a machine waking from suspend
 #: re-checks reasonably promptly.
 MAX_SLEEP_SECONDS = 15 * 60
+
+#: How far back, when the machine wakes, a reminder that fell due while it
+#: slept is still shown. Longer than any ordinary sleep; short enough that a
+#: laptop left in a drawer for a week does not open with a week of them.
+MISSED_WHILE_ASLEEP_LIMIT = timedelta(hours=24)
+
+#: How often to check whether the wall clock jumped, and by how much more than
+#: awake time it has to have moved to count.
+HEARTBEAT_SECONDS = 60
+CLOCK_JUMP_TOLERANCE_SECONDS = 90
+
+
+def clock_jumped(wall_elapsed: float, awake_elapsed: float) -> bool:
+    """Whether more real time passed than this process was awake for.
+
+    GLib's timers, like ``time.monotonic``, stop while the machine sleeps, so
+    after a suspend the wall clock has moved on further than they have. A
+    system clock set backwards shows up here too.
+    """
+    return abs(wall_elapsed - awake_elapsed) > CLOCK_JUMP_TOLERANCE_SECONDS
+
+
+def day_from_reminder_key(key: str) -> date | None:
+    """The day a reminder is about, read from its key alone.
+
+    A notification's Open button carries only the key, and Kairos may have
+    restarted since it was shown; the key still says when the event starts.
+    """
+    try:
+        _uid, stamp, _minutes = key.rsplit("|", 2)
+        return datetime.fromtimestamp(int(stamp), tz=local_timezone()).date()
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 @dataclass
@@ -154,6 +188,17 @@ class AlarmScheduler:
         self.application = application
         self.sync = sync_manager
         self._timer_id = 0
+        #: When reminders were last checked, by the wall clock. After a sleep
+        #: this is how far back a reminder that was missed is looked for.
+        self._last_check: datetime | None = None
+        self._heartbeat_id = 0
+        self._heartbeat_wall = 0.0
+        self._heartbeat_awake = 0.0
+        self._system_bus = None
+        self._sleep_subscription = 0
+        #: Reminders shown recently, by key: a notification button can only
+        #: carry a string, and this is how its action finds the reminder.
+        self._recent: dict[str, PendingReminder] = {}
         self._fired: dict[str, float] = self._load_history()
         self._snoozed: dict[str, PendingReminder] = self._load_snoozes()
 
@@ -168,10 +213,14 @@ class AlarmScheduler:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
+        self._watch_for_sleep()
+        self._start_heartbeat()
         self.reschedule()
 
     def stop(self) -> None:
         self._cancel_timer()
+        self._stop_heartbeat()
+        self._unwatch_sleep()
         self._save_history()
         self._save_snoozes()
 
@@ -182,15 +231,15 @@ class AlarmScheduler:
             return
 
         now = datetime.now(tz=local_timezone())
+        since = self._missed_since(now)
         next_moments = []
 
         # -- alarms that come from the calendar ---------------------------
-        for fire_at, occurrence, minutes in self.upcoming_alarms(now):
+        for fire_at, occurrence, minutes in self.upcoming_alarms(now, since=since):
             if fire_at > now:
                 next_moments.append(fire_at)
                 continue
-            # Due, including anything missed while the laptop was asleep.
-            if now - fire_at <= STALE_AFTER:
+            if self.should_raise(fire_at, occurrence.end, now, since):
                 self._raise(self._reminder_for(occurrence, minutes, fire_at))
             self._mark_fired(fire_at, occurrence, minutes)
 
@@ -207,6 +256,7 @@ class AlarmScheduler:
             if next_moments else MAX_SLEEP_SECONDS
         seconds = max(1.0, min(seconds, MAX_SLEEP_SECONDS))
         self._timer_id = GLib.timeout_add_seconds(int(seconds) + 1, self._on_timer)
+        self._last_check = now
 
     def _on_timer(self) -> bool:
         self._timer_id = 0
@@ -222,7 +272,8 @@ class AlarmScheduler:
     # Planning
     # ------------------------------------------------------------------
 
-    def upcoming_alarms(self, now: datetime) -> list[tuple[datetime, Occurrence, int]]:
+    def upcoming_alarms(self, now: datetime, *, since: datetime | None = None
+                        ) -> list[tuple[datetime, Occurrence, int]]:
         """Alarms due between "a little while ago" and the lookahead horizon.
 
         Returned as ``(fire_at, occurrence, minutes_before)``, earliest first,
@@ -236,7 +287,7 @@ class AlarmScheduler:
             self._longest_alarm_offset(),
             max((c.default_alarm_minutes for c in self.sync.calendars()),
                 default=0)))
-        window_start = now - STALE_AFTER
+        window_start = since if since is not None else now - STALE_AFTER
         window_end = now + lookahead + longest_offset
 
         events = self.sync.all_events_between(window_start, window_end)
@@ -311,6 +362,7 @@ class AlarmScheduler:
         wired one up, or the user has turned it off, the notification stands
         on its own as before.
         """
+        self._remember(reminder)
         self._notify(reminder)
         if self.on_alert is not None and settings.get_bool("reminder_alert_window"):
             try:
@@ -357,12 +409,131 @@ class AlarmScheduler:
         except Exception as exc:
             log.debug("could not attach notification action: %s", exc)
 
+        # Two things you can do without opening anything. The target is the
+        # reminder's key, which is all a notification button can carry.
+        try:
+            minutes = settings.get_int("reminder_snooze_minutes")
+            notification.add_button_with_target(
+                f"Snooze {_minutes_phrase(minutes)}", "app.snooze-reminder",
+                GLib.Variant("s", reminder.key))
+            notification.add_button_with_target(
+                "Open", "app.open-reminder", GLib.Variant("s", reminder.key))
+        except Exception as exc:
+            log.debug("could not add notification buttons: %s", exc)
+
         # A stable id means a repeated reminder replaces its predecessor in
         # the shell rather than stacking up.
-        self.application.send_notification(
-            f"kairos-{reminder.uid}-{int(reminder.start.timestamp())}", notification
-        )
+        self.application.send_notification(self.notification_id(reminder), notification)
         log.info("reminder shown for “%s”", reminder.summary)
+
+    # -- a notification's buttons ---------------------------------------
+
+    #: How many shown reminders to keep findable by key.
+    RECENT_LIMIT = 50
+
+    def _remember(self, reminder: PendingReminder) -> None:
+        self._recent[reminder.key] = reminder
+        while len(self._recent) > self.RECENT_LIMIT:
+            self._recent.pop(next(iter(self._recent)))
+
+    def reminder_by_key(self, key: str) -> PendingReminder | None:
+        """The reminder a notification button refers to, if still held."""
+        return self._recent.get(key) or self._snoozed.get(key)
+
+    @staticmethod
+    def notification_id(reminder: PendingReminder) -> str:
+        return f"kairos-{reminder.uid}-{int(reminder.start.timestamp())}"
+
+    def withdraw(self, reminder: PendingReminder) -> None:
+        """Take a reminder's notification off screen once it has been dealt with."""
+        if self.application is None:
+            return
+        try:
+            self.application.withdraw_notification(self.notification_id(reminder))
+        except Exception as exc:
+            log.debug("could not withdraw the notification: %s", exc)
+
+    # -- a machine that was asleep ---------------------------------------
+
+    def _missed_since(self, now: datetime) -> datetime:
+        """How far back a due reminder still counts as worth showing.
+
+        Normally half an hour. After a sleep it reaches back to the last time
+        anything was checked — so a reminder that came due while the lid was
+        shut is shown on waking instead of being quietly marked as done — but
+        never further back than a day.
+        """
+        recent = now - STALE_AFTER
+        if self._last_check is None:
+            return recent
+        return max(now - MISSED_WHILE_ASLEEP_LIMIT, min(recent, self._last_check))
+
+    @staticmethod
+    def should_raise(fire_at: datetime, event_end: datetime, now: datetime,
+                     since: datetime) -> bool:
+        """Whether a reminder that is already due should still be shown.
+
+        Anything that came due in the last half hour is shown, as before.
+        Something older — missed while the machine slept — is shown only if
+        its event has not finished: finding a reminder on waking for a
+        meeting that is already over is noise, not help.
+        """
+        if fire_at < since:
+            return False
+        if now - fire_at <= STALE_AFTER:
+            return True
+        return event_end > now
+
+    def _watch_for_sleep(self) -> None:
+        """Reschedule the moment the machine wakes.
+
+        The timer counts only time the machine is awake, so on its own it
+        would notice a reminder that came due during a sleep up to fifteen
+        minutes after waking. logind announces sleep and wake on the system
+        bus; the once-a-minute clock check covers anywhere it does not.
+        """
+        try:
+            self._system_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        except GLib.Error as exc:
+            log.debug("no system bus, relying on the clock check: %s", exc.message)
+            return
+        self._sleep_subscription = self._system_bus.signal_subscribe(
+            "org.freedesktop.login1", "org.freedesktop.login1.Manager",
+            "PrepareForSleep", "/org/freedesktop/login1", None,
+            Gio.DBusSignalFlags.NONE, self._on_prepare_for_sleep)
+
+    def _unwatch_sleep(self) -> None:
+        if self._system_bus is not None and self._sleep_subscription:
+            self._system_bus.signal_unsubscribe(self._sleep_subscription)
+        self._sleep_subscription = 0
+
+    def _on_prepare_for_sleep(self, *args) -> None:
+        going_to_sleep = args[5].unpack()[0]
+        if going_to_sleep:
+            self._save_history()
+            self._save_snoozes()
+            return
+        log.info("the machine woke up; checking reminders")
+        self.reschedule()
+
+    def _start_heartbeat(self) -> None:
+        self._heartbeat_wall = time.time()
+        self._heartbeat_awake = time.monotonic()
+        self._heartbeat_id = GLib.timeout_add_seconds(HEARTBEAT_SECONDS, self._on_heartbeat)
+
+    def _stop_heartbeat(self) -> None:
+        if self._heartbeat_id:
+            GLib.source_remove(self._heartbeat_id)
+            self._heartbeat_id = 0
+
+    def _on_heartbeat(self) -> bool:
+        """Once a minute: did more real time pass than the process was awake for?"""
+        wall, awake = time.time(), time.monotonic()
+        if clock_jumped(wall - self._heartbeat_wall, awake - self._heartbeat_awake):
+            log.info("the clock jumped (a sleep, or a changed clock); checking reminders")
+            self.reschedule()
+        self._heartbeat_wall, self._heartbeat_awake = wall, awake
+        return GLib.SOURCE_CONTINUE
 
     def _body(self, reminder: PendingReminder) -> str:
         parts = [f"{reminder.countdown_text()} · {reminder.when_text()}"]

@@ -159,6 +159,9 @@ class KairosApplication(Adw.Application):
         return 0
 
     def do_shutdown(self) -> None:
+        if getattr(self, "_tooltip_timer", 0):
+            GLib.source_remove(self._tooltip_timer)
+            self._tooltip_timer = 0
         if self.tray is not None:
             self.tray.stop()
         if self.alarms is not None:
@@ -181,6 +184,14 @@ class KairosApplication(Adw.Application):
         show_day = Gio.SimpleAction.new("show-day", GLib.VariantType.new("s"))
         show_day.connect("activate", self._on_show_day)
         self.add_action(show_day)
+
+        # A reminder notification's buttons. Their target is the reminder's
+        # key, the one thing a notification button can carry.
+        for name, handler in (("snooze-reminder", self._on_snooze_reminder),
+                              ("open-reminder", self._on_open_reminder)):
+            action = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
+            action.connect("activate", handler)
+            self.add_action(action)
 
         for action, keys in SHORTCUTS.items():
             self.set_accels_for_action(action, keys)
@@ -222,6 +233,13 @@ class KairosApplication(Adw.Application):
             ],
         )
         self.tray.start()
+
+        # What is on now and next, on the icon. Refreshed when events change,
+        # and every minute so "in 25 min" keeps counting down.
+        self._update_tray_tooltip()
+        self.sync.connect("events-changed", lambda *_: self._update_tray_tooltip())
+        self.sync.connect("calendars-changed", lambda *_: self._update_tray_tooltip())
+        self._tooltip_timer = GLib.timeout_add_seconds(60, self._on_tooltip_tick)
 
     def toggle_window(self) -> None:
         """What clicking the taskbar icon does.
@@ -280,6 +298,57 @@ class KairosApplication(Adw.Application):
         self.activate()
         if self.window is not None:
             self.window.go_to_day(reminder.start.date())
+
+    #: How far ahead the tray tooltip looks for what is next.
+    TOOLTIP_LOOKAHEAD_DAYS = 7
+
+    def _update_tray_tooltip(self) -> None:
+        """Put what is happening now, and what is next, on the tray icon."""
+        if getattr(self, "tray", None) is None:
+            return
+        from datetime import datetime, timedelta
+
+        from kairos import formatting, recurrence
+        from kairos.models import local_timezone, start_of_day
+
+        now = datetime.now(tz=local_timezone())
+        window_start = start_of_day(now.date())
+        window_end = window_start + timedelta(days=self.TOOLTIP_LOOKAHEAD_DAYS + 1)
+        events = self.sync.events_between(window_start, window_end)
+        occurrences = recurrence.expand(events, window_start, window_end)
+        self.tray.set_tooltip(formatting.tray_summary(occurrences, now))
+
+    def _on_tooltip_tick(self) -> bool:
+        self._update_tray_tooltip()
+        return GLib.SOURCE_CONTINUE
+
+    def _on_snooze_reminder(self, _action, parameter: GLib.Variant) -> None:
+        """Snooze pressed on a reminder's notification."""
+        reminder = self.alarms.reminder_by_key(parameter.get_string())
+        if reminder is None:
+            log.info("snooze pressed for a reminder Kairos no longer holds")
+            return
+        self.alarms.withdraw(reminder)
+        if self.alert_window is not None:
+            self.alert_window.forget(reminder)
+        self.alarms.snooze(reminder, settings.get_int("reminder_snooze_minutes"))
+
+    def _on_open_reminder(self, _action, parameter: GLib.Variant) -> None:
+        """Open pressed on a reminder's notification: its day, and done with it."""
+        key = parameter.get_string()
+        reminder = self.alarms.reminder_by_key(key)
+        if reminder is None:
+            # Kairos restarted since it was shown; the key still says when.
+            from kairos.notifications import day_from_reminder_key
+            day = day_from_reminder_key(key)
+            self.activate()
+            if day is not None and self.window is not None:
+                self.window.go_to_day(day)
+            return
+        self.alarms.withdraw(reminder)
+        if self.alert_window is not None:
+            self.alert_window.forget(reminder)
+        self._on_reminder_opened(None, reminder)
 
     def _on_settings_changed(self, key: str | None) -> None:
         if key in (None, "run_in_background"):

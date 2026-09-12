@@ -27,7 +27,7 @@ from kairos import formatting, recurrence
 from kairos.config import settings
 from kairos.models import Occurrence, local_timezone, start_of_day
 from kairos.ui.widgets import (assign_banner_rows, clear_children, describe,
-                               find_event_widget, mark_event_widget, on_click,
+                               find_event_widget, mark_event_widget,
                                style_widget, tinted_button_css)
 
 #: Rows per hour.  Four gives fifteen-minute resolution, which is as fine as
@@ -187,6 +187,17 @@ def _is_empty_space(container: Gtk.Widget, x: float, y: float) -> bool:
     return True
 
 
+def sketch_range(from_minutes: int, to_minutes: int) -> tuple[int, int]:
+    """The event a drag over empty space describes, in minutes from midnight.
+
+    Dragging upwards works as well as down. The row under the pointer counts
+    as part of the event, so the smallest possible sketch is one step long
+    rather than nothing.
+    """
+    low, high = sorted((from_minutes, to_minutes))
+    return low, min(MINUTES_PER_DAY, high + SLOT_SNAP_MINUTES)
+
+
 def scroll_to_reveal(value: float, page: float, upper: float,
                      top: float, bottom: float, margin: float) -> float:
     """Where to scroll so that ``top``..``bottom`` is on screen, moving least.
@@ -220,6 +231,8 @@ class WeekView(Gtk.Box):
         "event-activated": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
         # (occurrence, new start, new end) — emitted when a block is dragged.
         "event-moved": (GObject.SignalFlags.RUN_FIRST, None, (object, object, object)),
+        # (start, end) — emitted when empty space is dragged out into an event.
+        "create-range-requested": (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
         "create-requested": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "day-activated": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         "date-selected": (GObject.SignalFlags.RUN_FIRST, None, (object,)),
@@ -240,6 +253,11 @@ class WeekView(Gtk.Box):
         #: Timed occurrences per day, kept from the last redraw so the
         #: keyboard can tell whether the cursor is on an event.
         self._timed_by_day: dict[date, list[Occurrence]] = {}
+        #: A new event being dragged out over empty space, while it happens.
+        self._sketch: dict | None = None
+        self._sketch_widget: Gtk.Widget | None = None
+        #: Set once a press has become a drag, so its release is not a click.
+        self._sketch_consumed = False
         self._last_announcement = ""
         self._calendar_cache = None
         self._now_line: Gtk.Widget | None = None
@@ -406,7 +424,7 @@ class WeekView(Gtk.Box):
                 rule.set_size_request(-1, row_height * ROWS_PER_HOUR)
                 grid.attach(rule, 0, hour * ROWS_PER_HOUR, MAX_OVERLAP_COLUMNS, ROWS_PER_HOUR)
 
-            on_click(grid, lambda n, x, y, g=grid: self._on_column_click(g, n, x, y))
+            self._attach_grid_gestures(grid)
             self._columns_box.append(grid)
             self._day_grids.append(grid)
 
@@ -446,6 +464,98 @@ class WeekView(Gtk.Box):
         # set, never before: focusing an empty grid places a default cursor,
         # and that must not be mistaken for a first click on this slot.
         self.grab_focus()
+
+    # -- dragging out a new event ------------------------------------------
+
+    def _attach_grid_gestures(self, grid: Gtk.Grid) -> None:
+        """A click on empty space picks a slot; a drag sketches an event.
+
+        The click acts on *release*, not press. A press is how both gestures
+        begin, and acting on it meant that pressing an already-picked slot to
+        drag from it created an event before GTK could know a drag was coming.
+        """
+        click = Gtk.GestureClick()
+        click.set_button(Gdk.BUTTON_PRIMARY)
+        click.connect("released",
+                      lambda _g, n, x, y: self._on_grid_released(grid, n, x, y))
+        grid.add_controller(click)
+
+        drag = Gtk.GestureDrag()
+        drag.set_button(Gdk.BUTTON_PRIMARY)
+        drag.connect("drag-begin", lambda _g, x, y: self._on_sketch_begin(grid, x, y))
+        drag.connect("drag-update", lambda _g, dx, dy: self._on_sketch_update(grid, dx, dy))
+        drag.connect("drag-end", lambda _g, dx, dy: self._on_sketch_end(grid, dx, dy))
+        grid.add_controller(drag)
+
+    def _on_grid_released(self, grid: Gtk.Grid, n_press: int, x: float, y: float) -> None:
+        if self._sketch_consumed:
+            # The end of a drag that has made (or is making) its own event.
+            return
+        self._on_column_click(grid, n_press, x, y)
+
+    def _minutes_at(self, y: float) -> int:
+        """The snapped time a point in a day column stands for."""
+        row = max(0, int(y // max(1, self._row_height())))
+        minutes = min(ROWS_PER_DAY - 1, row) * MINUTES_PER_ROW
+        return minutes - minutes % SLOT_SNAP_MINUTES
+
+    def _on_sketch_begin(self, grid: Gtk.Grid, x: float, y: float) -> None:
+        # Every press starts here, click or drag, so this is where "was the
+        # last press a drag?" is forgotten.
+        self._sketch_consumed = False
+        self._clear_sketch()
+        if not _is_empty_space(grid, x, y):
+            self._sketch = None        # pressing an event drags *that* event
+            return
+        self._sketch = {"day": grid.day, "from": self._minutes_at(y), "y": y}
+
+    def _on_sketch_update(self, grid: Gtk.Grid, _dx: float, dy: float) -> None:
+        if self._sketch is None:
+            return
+        if not self._sketch_consumed and abs(dy) < DRAG_THRESHOLD_PIXELS * 2:
+            return                     # a wobble during a click, not a drag
+        self._sketch_consumed = True
+        span = sketch_range(self._sketch["from"], self._minutes_at(self._sketch["y"] + dy))
+        if span != self._sketch.get("range"):
+            self._sketch["range"] = span
+            self._show_sketch(grid, *span)
+
+    def _on_sketch_end(self, _grid: Gtk.Grid, _dx: float, _dy: float) -> None:
+        sketch, self._sketch = self._sketch, None
+        self._clear_sketch()
+        if sketch is None or not self._sketch_consumed or "range" not in sketch:
+            return
+        start, end = sketch["range"]
+        midnight = start_of_day(sketch["day"])
+        self.clear_slot()
+        self.emit("create-range-requested",
+                  midnight + timedelta(minutes=start), midnight + timedelta(minutes=end))
+
+    def _show_sketch(self, grid: Gtk.Grid, start: int, end: int) -> None:
+        """Outline the event being dragged out, with its times on it."""
+        self._clear_sketch()
+        midnight = start_of_day(grid.day)
+        first_row = start // MINUTES_PER_ROW
+        rows = max(1, min((end - start) // MINUTES_PER_ROW, ROWS_PER_DAY - first_row))
+        label = Gtk.Label(
+            label=(f"{formatting.format_time(midnight + timedelta(minutes=start))}"
+                   f" – {formatting.format_time(midnight + timedelta(minutes=end))}"),
+            xalign=0.5)
+        label.set_ellipsize(3)
+        label.set_hexpand(True)
+        label.set_valign(Gtk.Align.START)
+        widget = Gtk.Box()
+        widget.append(label)
+        widget.add_css_class("kairos-drop-indicator")
+        # Never under the pointer: it must not become what a press lands on.
+        widget.set_can_target(False)
+        grid.attach(widget, 0, first_row, MAX_OVERLAP_COLUMNS, rows)
+        self._sketch_widget = widget
+
+    def _clear_sketch(self) -> None:
+        widget, self._sketch_widget = self._sketch_widget, None
+        if widget is not None and widget.get_parent() is not None:
+            widget.get_parent().remove(widget)
 
     # -- the pending "new event here" slot -----------------------------
 
@@ -503,6 +613,7 @@ class WeekView(Gtk.Box):
     def refresh(self) -> None:
         self._calendar_cache = None      # colours and read-only flags may have moved
         chosen, self._slot_widget = self._slot, None
+        self._sketch, self._sketch_widget = None, None     # the grids are rebuilt
         self._slot = None
         self._build_gutter()
         self._build_columns()

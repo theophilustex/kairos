@@ -136,6 +136,8 @@ class CalendarWindow(Adw.ApplicationWindow):
             view.connect("event-activated", self._on_event_activated)
             if GObject.signal_lookup("event-moved", type(view)):
                 view.connect("event-moved", self._on_event_moved)
+            if GObject.signal_lookup("create-range-requested", type(view)):
+                view.connect("create-range-requested", self._on_create_range_requested)
             view.connect("create-requested", self._on_create_requested)
             view.connect("day-activated", self._on_day_activated)
             view.connect("date-selected", self._on_date_selected)
@@ -516,6 +518,15 @@ class CalendarWindow(Adw.ApplicationWindow):
         if not calendars:
             return
         editor = EventEditor(calendars, start=start)
+        editor.connect("saved", lambda _e, event: self.sync.save_event(event))
+        editor.present(self)
+
+    def _on_create_range_requested(self, _view, start: datetime, end: datetime) -> None:
+        """Empty space dragged out into an event: the editor opens at that length."""
+        calendars = self.sync.writable_calendars()
+        if not calendars:
+            return
+        editor = EventEditor(calendars, start=start, end=end)
         editor.connect("saved", lambda _e, event: self.sync.save_event(event))
         editor.present(self)
 

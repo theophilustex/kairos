@@ -7,6 +7,7 @@ worker thread only — never from the UI thread — so they are free to block.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from kairos.models import Account, Calendar, Event
@@ -28,11 +29,40 @@ class AuthenticationError(BackendError):
     """
 
 
+class SyncTokenRejected(BackendError):
+    """The server no longer accepts the sync-token Kairos held.
+
+    Servers may forget old tokens. Not something to report: it only means
+    this calendar has to be downloaded in full once more.
+    """
+
+
+@dataclass
+class SyncChanges:
+    """What changed in a calendar since a sync-token was issued."""
+
+    changed: list[Event] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)      # hrefs
+    token: str = ""
+
+
 class Backend(ABC):
     """Read and write calendars for one :class:`~kairos.models.Account`."""
 
     def __init__(self, account: Account) -> None:
         self.account = account
+
+    #: Whether :meth:`fetch_changes` can be used. A backend that cannot ask
+    #: for "only what changed" is downloaded in full whenever it changes.
+    supports_incremental_sync = False
+
+    def dav_sync_token(self, calendar: Calendar) -> str:
+        """The calendar's current RFC 6578 sync-token, or "" if there is none."""
+        return ""
+
+    def fetch_changes(self, calendar: Calendar, token: str) -> SyncChanges:
+        """What changed since ``token``. Only called when supported."""
+        raise NotImplementedError
 
     # -- discovery --------------------------------------------------------
 

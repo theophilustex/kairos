@@ -28,6 +28,7 @@ import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from kairos import ical
 from kairos.config import DATABASE_FILE, ensure_directories
@@ -71,7 +72,8 @@ CREATE TABLE IF NOT EXISTS calendars (
     read_only   INTEGER NOT NULL DEFAULT 0,
     visible     INTEGER NOT NULL DEFAULT 1,
     sync_token  TEXT NOT NULL DEFAULT '',
-    default_alarm_minutes INTEGER NOT NULL DEFAULT -1
+    default_alarm_minutes INTEGER NOT NULL DEFAULT -1,
+    dav_sync_token TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -169,6 +171,15 @@ def _fts_query(text: str) -> str:
     return " ".join(terms)
 
 
+def _resource_path(href: str) -> str:
+    """An href reduced to its unescaped path, so a URL and a bare path compare equal.
+
+    A server reports a removed event by path; Kairos stored its href as a
+    full URL. Only their paths can be matched up.
+    """
+    return unquote(urlparse(str(href)).path or str(href)).rstrip("/")
+
+
 class Storage:
     """The database.  One instance per running application.
 
@@ -237,6 +248,9 @@ class Storage:
             self._connection.execute(
                 "ALTER TABLE calendars ADD COLUMN default_alarm_minutes "
                 "INTEGER NOT NULL DEFAULT -1")
+        if "dav_sync_token" not in on_calendars:
+            self._connection.execute(
+                "ALTER TABLE calendars ADD COLUMN dav_sync_token TEXT NOT NULL DEFAULT ''")
 
     def _backfill_search_columns(self) -> None:
         """Fill in the new columns for events cached by an older version.
@@ -289,7 +303,8 @@ class Storage:
             if stored >= FETCH_VERSION:
                 return
             changed = self._connection.execute(
-                "UPDATE calendars SET sync_token = '' WHERE sync_token != ''").rowcount
+                "UPDATE calendars SET sync_token = '', dav_sync_token = ''"
+                " WHERE sync_token != '' OR dav_sync_token != ''").rowcount
             self._connection.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('fetch_version', ?)",
                 (str(FETCH_VERSION),))
@@ -313,13 +328,14 @@ class Storage:
         """
         with self._lock:
             stuck = self._connection.execute(
-                "SELECT id, name FROM calendars WHERE sync_token != ''"
+                "SELECT id, name FROM calendars"
+                " WHERE (sync_token != '' OR dav_sync_token != '')"
                 " AND id NOT IN (SELECT DISTINCT calendar_id FROM events)"
             ).fetchall()
             if not stuck:
                 return 0
             self._connection.executemany(
-                "UPDATE calendars SET sync_token = '' WHERE id = ?",
+                "UPDATE calendars SET sync_token = '', dav_sync_token = '' WHERE id = ?",
                 [(row["id"],) for row in stuck],
             )
             self._connection.commit()
@@ -375,8 +391,8 @@ class Storage:
                 """
                 INSERT INTO calendars (id, account_id, name, colour, url,
                                        read_only, visible, sync_token,
-                                       default_alarm_minutes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       default_alarm_minutes, dav_sync_token)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     account_id = excluded.account_id,
                     name       = excluded.name,
@@ -385,12 +401,14 @@ class Storage:
                     read_only  = excluded.read_only,
                     visible    = excluded.visible,
                     sync_token = excluded.sync_token,
-                    default_alarm_minutes = excluded.default_alarm_minutes
+                    default_alarm_minutes = excluded.default_alarm_minutes,
+                    dav_sync_token = excluded.dav_sync_token
                 """,
                 (
                     calendar.id, calendar.account_id, calendar.name, calendar.colour,
                     calendar.url, int(calendar.read_only), int(calendar.visible),
                     calendar.sync_token, int(calendar.default_alarm_minutes),
+                    calendar.dav_sync_token,
                 ),
             )
             self._connection.commit()
@@ -423,6 +441,8 @@ class Storage:
             sync_token=row["sync_token"],
             default_alarm_minutes=(row["default_alarm_minutes"]
                                    if "default_alarm_minutes" in row.keys() else -1),
+            dav_sync_token=(row["dav_sync_token"]
+                            if "dav_sync_token" in row.keys() else ""),
         )
 
     # ------------------------------------------------------------------
@@ -577,6 +597,36 @@ class Storage:
             row["uid"] for row in existing if row["pending"] != PENDING_NONE
         }
         self.save_events([e for e in events if e.uid not in locally_changed])
+
+    def apply_remote_changes(self, calendar_id: str, changed: list[Event],
+                             removed_hrefs: list[str]) -> tuple[int, int]:
+        """Apply what an incremental sync reported: some events changed, some gone.
+
+        Rows with local changes are left alone, exactly as a full refresh
+        leaves them — an unpushed edit must survive whatever the server says,
+        including that the event was deleted. Returns ``(updated, removed)``.
+        """
+        gone = {_resource_path(href) for href in removed_hrefs}
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT uid, href, pending FROM events WHERE calendar_id = ?",
+                (calendar_id,)).fetchall()
+            locally_changed = {row["uid"] for row in rows if row["pending"] != PENDING_NONE}
+            doomed = [row["uid"] for row in rows
+                      if row["href"] and row["pending"] == PENDING_NONE
+                      and _resource_path(row["href"]) in gone]
+            if doomed:
+                self._connection.executemany(
+                    "DELETE FROM events WHERE calendar_id = ? AND uid = ?",
+                    [(calendar_id, uid) for uid in doomed])
+            self._connection.commit()
+        for uid in doomed:
+            self._parse_cache.pop((calendar_id, uid), None)
+
+        fresh = [event for event in changed if event.uid not in locally_changed]
+        if fresh:
+            self.save_events(fresh)
+        return len(fresh), len(doomed)
 
     def events_in_range(
         self, calendar_ids: list[str], start: datetime, end: datetime

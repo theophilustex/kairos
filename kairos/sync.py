@@ -30,7 +30,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, GObject  # noqa: E402
 
 from kairos.accounts import AccountStore
-from kairos.backends import AuthenticationError, BackendError, backend_for
+from kairos.backends import AuthenticationError, BackendError, SyncTokenRejected, backend_for
 from kairos.backends.local import LOCAL_ACCOUNT_ID, default_calendar
 from kairos.config import settings
 from kairos.models import Calendar, Event, Occurrence, local_timezone
@@ -646,6 +646,40 @@ class SyncManager(GObject.Object):
         if first_error is not None:
             raise first_error
 
+    def _sync_changes_only(self, backend, calendar: Calendar) -> bool:
+        """Fetch just what changed in a calendar, when that is possible.
+
+        Returns whether it was done. False sends the caller on to a full
+        download — always correct, only slower — so anything short of
+        certainty ends up there: no token yet, a server that cannot do this,
+        a token it has forgotten, a reply that did not make sense. A wrong
+        password is the exception, and is raised as usual.
+        """
+        if not calendar.dav_sync_token or not getattr(backend, "supports_incremental_sync", False):
+            return False
+        try:
+            changes = backend.fetch_changes(calendar, calendar.dav_sync_token)
+        except AuthenticationError:
+            raise
+        except SyncTokenRejected:
+            log.info("“%s”: the server no longer knows our sync-token; "
+                     "downloading it in full", calendar.name)
+            return False
+        except BackendError as exc:
+            log.info("“%s”: could not fetch only the changes (%s); "
+                     "downloading it in full", calendar.name, exc)
+            return False
+        if not changes.token:
+            return False            # nothing to carry forward, so do it properly
+
+        updated, removed = self.storage.apply_remote_changes(
+            calendar.id, changes.changed, changes.removed)
+        # After the changes are stored, never before: the same rule as the
+        # ctag, for the same reason.
+        calendar.dav_sync_token = changes.token
+        log.info("synced “%s”: %d changed, %d removed", calendar.name, updated, removed)
+        return True
+
     def _sync_account(self, backend, account, window_start, window_end) -> None:
         """Refresh one account's calendars.  Worker thread."""
         discovered = backend.discover_calendars()
@@ -674,16 +708,28 @@ class SyncManager(GObject.Object):
             # then sits there for ever with no events in it.
             fresh_token = calendar.sync_token
             calendar.sync_token = existing.sync_token if existing else ""
+            calendar.dav_sync_token = existing.dav_sync_token if existing else ""
             self.storage.save_calendar(calendar)
 
             if unchanged:
                 log.debug("“%s” is unchanged; skipping download", calendar.name)
                 continue
 
+            if self._sync_changes_only(backend, calendar):
+                calendar.sync_token = fresh_token
+                self.storage.save_calendar(calendar)
+                continue
+
+            # A full download. The sync-token is read *before* it starts, so
+            # anything changed while it is under way still counts as new next
+            # time instead of falling into the gap between the two.
+            dav_token = (backend.dav_sync_token(calendar)
+                         if getattr(backend, "supports_incremental_sync", False) else "")
             events = backend.fetch_events(calendar, window_start, window_end)
             self.storage.replace_calendar_events(calendar.id, events)
 
             calendar.sync_token = fresh_token
+            calendar.dav_sync_token = dav_token
             self.storage.save_calendar(calendar)
             log.info("synced “%s”: %d events", calendar.name, len(events))
 

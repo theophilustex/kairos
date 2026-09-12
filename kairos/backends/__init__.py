@@ -14,7 +14,8 @@ for another protocol means writing one new class here and adding it to
 
 from __future__ import annotations
 
-from kairos.backends.base import Backend, BackendError, AuthenticationError
+from kairos.backends.base import (Backend, BackendError, AuthenticationError,
+                                  SyncChanges, SyncTokenRejected)
 from kairos.backends.local import LocalBackend
 from kairos.models import Account, CALDAV, LOCAL
 
@@ -34,10 +35,4 @@ def backend_for(account: Account, *, password: str | None = None) -> Backend:
     raise BackendError(f"Unknown account type: {account.kind!r}")
 
 
-__all__ = [
-    "Backend",
-    "BackendError",
-    "AuthenticationError",
-    "LocalBackend",
-    "backend_for",
-]
+__all__ = ["AuthenticationError", "Backend", "BackendError", "LocalBackend", "SyncChanges", "SyncTokenRejected", "backend_for"]

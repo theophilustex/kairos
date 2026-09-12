@@ -202,6 +202,10 @@ class Calendar:
     #: server: it is a preference about how you want to be told, not a
     #: correction to somebody else's data.
     default_alarm_minutes: int = -1
+    #: The server's RFC 6578 sync-token: "you have everything up to here".
+    #: Different from ``sync_token``, which is a ctag and says only *whether*
+    #: anything changed; this one lets the next sync ask for exactly *what*.
+    dav_sync_token: str = ""
 
     @property
     def default_alarm(self) -> Alarm | None:

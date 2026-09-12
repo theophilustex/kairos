@@ -287,6 +287,24 @@ class TrayIcon:
     # PyGObject drops the GError out-parameter, so this takes five arguments
     # and not the six the C signature suggests. Getting it wrong makes every
     # property read fail silently and no icon ever appears.
+    def set_tooltip(self, text: str) -> None:
+        """Change the tooltip, and tell the tray so that it reads it again.
+
+        A tray reads the properties when told something changed, and not
+        otherwise; without NewToolTip it would go on showing the first text
+        it ever read.
+        """
+        if text == self.tooltip:
+            return
+        self.tooltip = text
+        if self._connection is None or not self._item_registration:
+            return
+        try:
+            self._connection.emit_signal(None, ITEM_PATH, "org.kde.StatusNotifierItem",
+                                         "NewToolTip", None)
+        except GLib.Error as exc:
+            log.debug("could not announce the new tooltip: %s", exc.message)
+
     def _on_item_property(self, _conn, _sender, _path, _iface, name):
         values = {
             "Category": GLib.Variant("s", "ApplicationStatus"),

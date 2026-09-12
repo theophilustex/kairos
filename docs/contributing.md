@@ -32,7 +32,7 @@ python3 -m unittest tests.test_ical -v      # one module
 python3 -m unittest tests.test_ical.AllDayEvents.test_written_as_dates_not_datetimes
 ```
 
-793 tests, all standard-library `unittest`. There is no framework to install
+880 tests, all standard-library `unittest`. There is no framework to install
 and no configuration file.
 
 | Module | |
@@ -63,6 +63,10 @@ and no configuration file.
 | `test_past_events.py` | Fading events that have ended, and keeping that true as time passes. |
 | `test_week_keyboard.py` | The keyboard cursor in the week and day grids. |
 | `test_autostart_repair.py` | A login entry pointing at a copy of Kairos that has moved. |
+| `test_drag_create.py` | Dragging over empty space to draw out a new event. |
+| `test_reminders_sleep.py` | Reminders across a sleep, and the notification's buttons. |
+| `test_tray_tooltip.py` | What the tray tooltip says, and telling the tray it changed. |
+| `test_incremental_sync.py` | Fetching only what changed, and falling back safely. |
 | `test_drag.py` | Dragging blocks to move and resize events. |
 | `test_keyboard.py` | Arrow-key navigation of the month grid. |
 | `test_gestures.py` | Swiping. |

@@ -276,6 +276,14 @@ class ReminderAlertWindow(Adw.ApplicationWindow):
             self._stop_countdown()
             self.close()
 
+    def forget(self, reminder) -> None:
+        """Take a reminder off this window because it was dealt with elsewhere.
+
+        From its notification's Snooze or Open, say. Emits nothing: the
+        reminder has already been handled, and emitting would handle it twice.
+        """
+        self._remove(reminder)
+
     def _on_dismiss(self, reminder) -> None:
         self.emit("dismissed", reminder)
         self._remove(reminder)

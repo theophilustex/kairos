@@ -151,7 +151,21 @@ reschedule()
 ```
 
 `_raise()` sends the desktop notification and calls `on_alert`, which `app.py`
-points at the alert window.
+points at the alert window. The notification carries *Snooze* and *Open*
+buttons; a button can only send a string, so each carries the reminder's key,
+and the scheduler keeps recently shown reminders by key for the application's
+`snooze-reminder` and `open-reminder` actions to find.
+
+**Sleep.** The single timer is a GLib timeout, and GLib's clock stops while
+the machine sleeps. Two things make that safe. The scheduler listens for
+logind's `PrepareForSleep` signal and reschedules on waking; and once a minute
+it compares wall-clock time with awake time, which catches a sleep on systems
+without logind and a changed system clock too. On a check after a sleep,
+anything due since the *last check* is considered — not merely the last half
+hour — and shown if its event has not yet finished, capped at a day. Before
+this, anything more than thirty minutes overdue was marked as handled
+without being shown, so a reminder that came due while the lid was shut was
+simply lost.
 
 Two files keep state: `fired_alarms.json`, so restarting does not replay this
 morning's reminders, and `snoozed_reminders.json`, which carries enough of the
@@ -179,6 +193,23 @@ so the sync worker and the UI never have to know what a `PropfindError` is.
 caldav's `save()`, because that is the only way to send `If-Match` and
 `If-None-Match`. ETags are fetched with one extra PROPFIND per calendar per
 sync, because the calendar-query report returns event data but not ETags.
+
+**Only what changed.** When a calendar's ctag says something changed,
+`SyncManager` first asks for just the changes: an RFC 6578 `sync-collection`
+REPORT with the token stored from last time, then a multiget for those
+events' bodies. On the reporter's NAS that is a tenth of a second against two
+seconds for a full download of a 277-event calendar. The token is read
+*before* a full download starts, so a change made during it is still new
+next time. Any doubt — no token, a token the server has forgotten, a reply
+that does not parse — falls back to a full download, which is always
+correct. The request is sent as raw XML because caldav's own sync helpers
+differ between the version the tests run and the one the AppImage bundles.
+
+One trap, found against a real server: a server refusing a stale token
+answers 403, which caldav raises as an *authorization* error. Mapped the
+obvious way that reads as a wrong password, and would have had Kairos ask
+for the password again whenever a server forgot a token. It is treated as a
+refused token instead.
 
 `LocalBackend` agrees with everything and stores nothing extra: the SQLite
 cache *is* the storage. It exists so local calendars take the same code path

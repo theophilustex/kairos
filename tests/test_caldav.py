@@ -941,3 +941,100 @@ class MovingBetweenCollections(CalDAVServerTestCase):
         self.assertTrue(written.href.rstrip("/").rsplit("/", 2)[-2] !=
                         saved.href.rstrip("/").rsplit("/", 2)[-2],
                         "the new resource should be in a different collection")
+
+
+class OnlyWhatChanged(CalDAVServerTestCase):
+    """RFC 6578 sync-collection against a real server.
+
+    Radicale supports it, as does the Synology NAS this was written for;
+    the NAS was checked by hand, counts only.
+    """
+
+    def changes_since(self, token):
+        return self.backend.fetch_changes(self.calendar, token)
+
+    def test_the_server_hands_out_a_token(self):
+        self.assertTrue(self.backend.dav_sync_token(self.calendar))
+
+    def test_nothing_changed_means_nothing_reported(self):
+        self.backend.save_event(self.calendar, self.make("Standup"))
+        token = self.backend.dav_sync_token(self.calendar)
+        changes = self.changes_since(token)
+        self.assertEqual((changes.changed, changes.removed), ([], []))
+        self.assertTrue(changes.token)
+
+    def test_a_new_event_is_reported_with_its_reminder(self):
+        token = self.backend.dav_sync_token(self.calendar)
+        event = self.make("Dentist")
+        event.alarms = [Alarm(30)]
+        self.backend.save_event(self.calendar, event)
+        changes = self.changes_since(token)
+        self.assertEqual([e.summary for e in changes.changed], ["Dentist"])
+        self.assertEqual([a.minutes_before for a in changes.changed[0].alarms], [30])
+        self.assertTrue(changes.changed[0].href)
+
+    def test_an_edit_is_reported(self):
+        saved = self.backend.save_event(self.calendar, self.make("Before"))
+        token = self.backend.dav_sync_token(self.calendar)
+        self.backend.save_event(self.calendar, self.fetch()[0].copy(summary="After", raw_ics=""))
+        changes = self.changes_since(token)
+        self.assertEqual([e.summary for e in changes.changed], ["After"])
+        self.assertEqual(changes.changed[0].uid, saved.uid)
+
+    def test_a_deletion_is_reported_as_a_removal(self):
+        saved = self.backend.save_event(self.calendar, self.make("Doomed"))
+        token = self.backend.dav_sync_token(self.calendar)
+        self.backend.delete_event(self.calendar, self.fetch()[0])
+        changes = self.changes_since(token)
+        self.assertEqual(changes.changed, [])
+        from kairos.backends.caldav_backend import _path_of
+        self.assertEqual([_path_of(h) for h in changes.removed], [_path_of(saved.href)])
+
+    def test_the_new_token_moves_on(self):
+        token = self.backend.dav_sync_token(self.calendar)
+        self.backend.save_event(self.calendar, self.make("Standup"))
+        first = self.changes_since(token)
+        self.assertNotEqual(first.token, token)
+        self.assertEqual(self.changes_since(first.token).changed, [])
+
+    def test_a_bogus_token_is_refused_not_misread(self):
+        from kairos.backends import SyncTokenRejected
+        with self.assertRaises(SyncTokenRejected):
+            self.changes_since("http://radicale.org/ns/sync/not-a-real-token")
+
+    def test_a_second_sync_through_kairos_fetches_only_the_change(self):
+        import tempfile
+        from pathlib import Path
+        from kairos.accounts import AccountStore
+        from kairos.security import credentials
+        from kairos.storage import Storage
+        from kairos.sync import SyncManager
+
+        directory = Path(tempfile.mkdtemp(prefix="kairos-incremental-dav-"))
+        accounts = AccountStore(directory / "accounts.json")
+        accounts.add(self.account)
+        credentials.set_password(self.account.id, "secret123")
+        manager = SyncManager(store=Storage(directory / "cache.db"), accounts=accounts)
+        try:
+            self.backend.save_event(self.calendar, self.make("Standup"))
+            manager._full_sync()
+            self.assertTrue([c for c in manager.storage.list_calendars()
+                             if c.id == self.calendar.id][0].dav_sync_token)
+
+            self.backend.save_event(self.calendar, self.make("Dentist", hours_ahead=4))
+            from kairos.backends.caldav_backend import CalDAVBackend
+            full_downloads = []
+            original = CalDAVBackend.fetch_events
+            CalDAVBackend.fetch_events = lambda *a, **k: (full_downloads.append(1),
+                                                          original(*a, **k))[1]
+            try:
+                manager._full_sync()
+            finally:
+                CalDAVBackend.fetch_events = original
+
+            self.assertEqual(full_downloads, [], "downloaded everything again")
+            summaries = sorted(e.summary for e in manager.storage.events_in_range(
+                [self.calendar.id], self.now - timedelta(days=2), self.now + timedelta(days=30)))
+            self.assertEqual(summaries, ["Dentist", "Standup"])
+        finally:
+            manager.storage.close()

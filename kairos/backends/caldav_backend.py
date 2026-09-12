@@ -22,13 +22,15 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
+from xml.sax.saxutils import escape as _xml_escape
 
 import caldav
 from caldav.elements import dav, ical as ical_elements
 from caldav.lib import error as caldav_error
 
 from kairos import ical
-from kairos.backends.base import AuthenticationError, Backend, BackendError
+from kairos.backends.base import (AuthenticationError, Backend, BackendError,
+                                  SyncChanges, SyncTokenRejected)
 from kairos.config import settings
 from kairos.models import Account, Calendar, Event
 from kairos.security import (
@@ -322,6 +324,105 @@ class CalDAVBackend(Backend):
     def current_sync_token(self, calendar: Calendar) -> str:
         return self._read_ctag(self._collection(calendar))
 
+    # -- only what changed (RFC 6578) -------------------------------------
+    #
+    # Sent as raw XML rather than through caldav's own sync helpers. Those
+    # changed shape between the caldav the tests run against and the one the
+    # AppImage bundles, while the REPORT itself is the same on the wire.
+
+    supports_incremental_sync = True
+
+    def dav_sync_token(self, calendar: Calendar) -> str:
+        """The collection's current sync-token, or "" if the server has none."""
+        body = ('<?xml version="1.0" encoding="utf-8"?>'
+                '<d:propfind xmlns:d="DAV:"><d:prop><d:sync-token/></d:prop></d:propfind>')
+        try:
+            tree = _response_tree(self._connect().propfind(calendar.url, body, depth=0))
+        except Exception as exc:
+            log.debug("%s: no sync-token (%s)", calendar.name, exc)
+            return ""
+        token = tree.findtext(".//{DAV:}sync-token") if tree is not None else None
+        return sanitise_text(token or "", max_length=500)
+
+    def fetch_changes(self, calendar: Calendar, token: str) -> SyncChanges:
+        """New, edited and removed events since ``token``.
+
+        One sync-collection REPORT lists them; one multiget per batch fetches
+        the bodies — the same multiget a full download uses, so these events
+        keep the reminders a calendar-query would strip.
+        """
+        body = ('<?xml version="1.0" encoding="utf-8"?>'
+                '<d:sync-collection xmlns:d="DAV:">'
+                f'<d:sync-token>{_xml_escape(token)}</d:sync-token>'
+                '<d:sync-level>1</d:sync-level>'
+                '<d:prop><d:getetag/></d:prop>'
+                '</d:sync-collection>')
+        description = f"check “{calendar.name}” for changes"
+        try:
+            response = self._connect().report(calendar.url, body, depth=0)
+        except caldav_error.AuthorizationError as exc:
+            # A server refusing a stale sync-token answers 403, and caldav
+            # raises that as an authorization error. Reading it as a wrong
+            # password would have Kairos ask for the password again every
+            # time a server forgot a token — and the same password has just
+            # been accepted for discovery. So it is a refused token; if the
+            # password really were wrong, the full download this leads to
+            # reports it properly.
+            raise SyncTokenRejected(
+                f"“{calendar.name}” refused the sync-token Kairos held.") from exc
+        except Exception as exc:
+            if _refuses_token(str(exc)):
+                raise SyncTokenRejected(
+                    f"“{calendar.name}” no longer accepts Kairos's sync-token.") from exc
+            self._guarded(_raise, description, exc)
+            raise
+
+        status = int(getattr(response, "status", 207) or 207)
+        tree = _response_tree(response)
+        if status in (403, 409, 412) or (
+                tree is not None and tree.find(".//{DAV:}valid-sync-token") is not None):
+            raise SyncTokenRejected(
+                f"“{calendar.name}” no longer accepts Kairos's sync-token.")
+        if status >= 400 or tree is None:
+            raise BackendError(f"Could not {description}: the server replied {status}.")
+
+        collection = self._collection(calendar)
+        own_path = _path_of(calendar.url)
+        changed, removed, etags = [], [], {}
+        for entry in tree.iterfind(".//{DAV:}response"):
+            href = (entry.findtext("{DAV:}href") or "").strip()
+            if not href or _path_of(href) == own_path:
+                continue                        # the collection itself
+            if " 404" in (entry.findtext("{DAV:}status") or ""):
+                removed.append(href)
+                continue
+            etag = entry.findtext(".//{DAV:}getetag")
+            if etag:
+                etags[_path_of(href)] = _clean_etag(etag)
+            changed.append(_Resource(collection.url.join(href)))
+
+        bodies = self._bodies_by_multiget(collection, changed, calendar)
+        events: list[Event] = []
+        for resource in changed:
+            path = _path_of(str(resource.url))
+            text = bodies.get(path)
+            if not text or len(text) > MAX_RESPONSE_BYTES:
+                continue
+            try:
+                parsed = ical.parse_calendar_text(text, calendar.id, href=str(resource.url),
+                                                  etag=etags.get(path) or None)
+            except ical.ParseError as exc:
+                log.warning("server sent an unreadable event (%s)", exc)
+                continue
+            for event in parsed:
+                event.raw_ics = text
+                events.append(event)
+
+        new_token = sanitise_text(tree.findtext(".//{DAV:}sync-token") or "", max_length=500)
+        log.info("%s: %d changed, %d removed since the last sync",
+                 calendar.name, len(events), len(removed))
+        return SyncChanges(changed=events, removed=removed, token=new_token)
+
     def fetch_events(self, calendar: Calendar, start: datetime, end: datetime) -> list[Event]:
         """Download every event in the window, as master components."""
         collection = self._collection(calendar)
@@ -614,6 +715,40 @@ class CalDAVBackend(Backend):
 class _CTag(dav.ValuedBaseElement):
     """The calendar-server ``getctag`` property, which caldav does not define."""
     tag = CTAG_PROPERTY
+
+
+class _Resource:
+    """Just enough of a caldav object for :meth:`CalDAVBackend._bodies_by_multiget`."""
+
+    def __init__(self, url) -> None:
+        self.url = url
+
+
+def _raise(exc: Exception) -> None:
+    raise exc
+
+
+def _refuses_token(text: str) -> bool:
+    """Whether an error reads like a server refusing a stale sync-token.
+
+    Erring towards yes is safe: a refusal only means a full download.
+    """
+    lowered = text.lower()
+    return "valid-sync-token" in lowered or any(code in text for code in ("403", "409", "412"))
+
+
+def _response_tree(response):
+    """The parsed XML of a DAV response, however this version of caldav holds it."""
+    tree = getattr(response, "tree", None)
+    if tree is not None:
+        return tree
+    raw = getattr(response, "raw", None) or getattr(response, "_raw", None)
+    if not raw:
+        return None
+    from lxml import etree
+    # Server XML is untrusted: no entity expansion, no network fetches.
+    parser = etree.XMLParser(resolve_entities=False, no_network=True)
+    return etree.fromstring(raw.encode() if isinstance(raw, str) else raw, parser)
 
 
 def _path_of(url: str) -> str:
